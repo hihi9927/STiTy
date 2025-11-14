@@ -47,14 +47,17 @@ body {
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border-radius: var(--radius);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
   border: none;
-  padding: 20px 32px; /* vmin 대신 고정값 (clamp의 max 값) */
+  outline: none;
+  padding: 20px 32px;
   transition: background 0.3s ease;
   pointer-events: auto;
   user-select: none;
   position: relative;
-  cursor: pointer;
+  cursor: grab;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .panel:hover {
@@ -124,6 +127,12 @@ body {
   opacity: 0.55;
   border-radius: 999px;
   background: linear-gradient(90deg, var(--accent1), var(--accent2));
+  transition: background 0.3s ease;
+}
+
+/* 녹음이 일시정지(안 됨) 상태일 때 빨간 그라데이션 */
+.rule.paused {
+  background: linear-gradient(90deg, #ff5757, #ff2b2b, #e60000);
 }
 
 .settings-overlay {

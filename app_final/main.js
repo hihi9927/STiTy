@@ -22,7 +22,6 @@ function createWindow() {
     y: y,
     transparent: true,
     frame: false,
-    hasShadow: false,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -30,9 +29,7 @@ function createWindow() {
     backgroundColor: '#00000000',
     alwaysOnTop: true,
     resizable: true,
-    skipTaskbar: false,
-    visualEffectState: 'active',
-    vibrancy: null
+    skipTaskbar: false
   });
 
   // PowerPoint 전체화면 위에도 표시되도록 최상위 레벨 설정
@@ -244,6 +241,24 @@ function setupIpcListeners() {
     }
   });
 
+  ipcMain.on('lang-changed', (event, value) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('lang-changed', value);
+    }
+  });
+
+  ipcMain.on('polish-changed', (event, value) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('polish-changed', value);
+    }
+  });
+
+  ipcMain.on('translate-changed', (event, value) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('translate-changed', value);
+    }
+  });
+
   ipcMain.on('display-mode-changed', (_event, value) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('display-mode-changed', value);
@@ -259,6 +274,21 @@ function setupIpcListeners() {
   // 앱 종료 요청
   ipcMain.on('close-app', () => {
     app.quit();
+  });
+
+  // 설정 창에서 녹음 토글 요청
+  ipcMain.on('toggle-recording', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('toggle-recording');
+    }
+  });
+
+  // 윈도우 위치 요청
+  ipcMain.handle('get-window-bounds', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      return mainWindow.getBounds();
+    }
+    return { x: 0, y: 0, width: 0, height: 0 };
   });
 
   // 초기 상태 요청 (설정 창이 열릴 때)
@@ -282,21 +312,6 @@ function setupIpcListeners() {
     if (settingsWindow && !settingsWindow.isDestroyed()) {
       settingsWindow.webContents.send(`update-${statusType}`, value);
     }
-  });
-
-  // 설정 창에서 녹음 토글 요청
-  ipcMain.on('toggle-recording', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('toggle-recording');
-    }
-  });
-
-  // 윈도우 위치 요청
-  ipcMain.handle('get-window-bounds', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      return mainWindow.getBounds();
-    }
-    return { x: 0, y: 0, width: 0, height: 0 };
   });
 }
 
@@ -330,11 +345,14 @@ app.on('will-quit', () => {
   ipcMain.removeAllListeners('opacity-changed');
   ipcMain.removeAllListeners('text-size-changed');
   ipcMain.removeAllListeners('server-url-changed');
+  ipcMain.removeAllListeners('lang-changed');
+  ipcMain.removeAllListeners('polish-changed');
+  ipcMain.removeAllListeners('translate-changed');
   ipcMain.removeAllListeners('display-mode-changed');
   ipcMain.removeAllListeners('auto-opacity-changed');
   ipcMain.removeAllListeners('close-app');
+  ipcMain.removeAllListeners('toggle-recording');
   ipcMain.removeAllListeners('request-initial-state');
   ipcMain.removeAllListeners('send-state-to-settings');
   ipcMain.removeAllListeners('status-update');
-  ipcMain.removeAllListeners('toggle-recording');
 });

@@ -9,6 +9,9 @@ const state = {
   ws: null,
   mediaRecorder: null,
   mediaStream: null,
+  audioContext: null,
+  audioWorkletNode: null,
+  audioBuffer: [],
   isRecording: false,
   isServerConnected: false,
   translationHistory: [],
@@ -84,12 +87,6 @@ function updateOpacity(value, autoAdjust = false) {
   // 자동 조정 모드일 때 배경 밝기에 따라 보정
   if (autoAdjust && state.backgroundBrightness !== undefined) {
     const brightness = state.backgroundBrightness;
-
-    // 밝기 기준: 0-255
-    // 0-80: 매우 어두움 -> 투명도 높임 (0.3-0.5)
-    // 80-150: 중간 어두움 -> 기본 투명도 (0.5-0.75)
-    // 150-200: 밝음 -> 불투명도 높임 (0.75-0.9)
-    // 200-255: 매우 밝음 -> 매우 불투명 (0.9-0.98)
 
     if (brightness < 80) {
       // 매우 어두운 배경: 투명하게
@@ -327,11 +324,11 @@ async function startRecording() {
     console.log('⚠️ 이미 녹음 중');
     return;
   }
-  
+
   try {
     // WebSocket 연결 확인 및 재연결
     await connectWebSocket();
-    
+
     // WebSocket이 열릴 때까지 대기
     let retries = 0;
     while ((!state.ws || state.ws.readyState !== WebSocket.OPEN) && retries < 10) {
@@ -339,7 +336,7 @@ async function startRecording() {
       await new Promise(resolve => setTimeout(resolve, 300));
       retries++;
     }
-    
+
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
       console.error('❌ WebSocket 연결 타임아웃');
       alert('서버 연결에 실패했습니다. 서버 URL을 확인해주세요.');
@@ -348,33 +345,79 @@ async function startRecording() {
 
     await initAudioStream();
 
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : 'audio/webm';
-
-    state.mediaRecorder = new MediaRecorder(state.mediaStream, { 
-      mimeType,
-      audioBitsPerSecond: 128000
+    // AudioContext 생성
+    state.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+      sampleRate: 48000
     });
 
-    state.mediaRecorder.ondataavailable = (event) => {
-      if (event.data && event.data.size > 0) {
-        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-          state.ws.send(event.data);
-          console.log('📤 오디오 청크 전송:', event.data.size, 'bytes');
+    const source = state.audioContext.createMediaStreamSource(state.mediaStream);
+
+    // ScriptProcessorNode 사용 (AudioWorklet은 Electron에서 까다로울 수 있음)
+    const bufferSize = 4096;
+    const processor = state.audioContext.createScriptProcessor(bufferSize, 1, 1);
+
+    // 500ms마다 전송 (16kHz * 0.5초 = 8000 샘플)
+    const targetSamplesPerChunk = 8000;
+    state.audioBuffer = [];
+
+    processor.onaudioprocess = (e) => {
+      if (!state.isRecording || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      const inputData = e.inputBuffer.getChannelData(0);
+
+      // 48kHz -> 16kHz 다운샘플링
+      const targetSampleRate = 16000;
+      const sourceSampleRate = state.audioContext.sampleRate;
+      const ratio = sourceSampleRate / targetSampleRate;
+      const newLength = Math.floor(inputData.length / ratio);
+      const downsampled = new Float32Array(newLength);
+
+      for (let i = 0; i < newLength; i++) {
+        const srcIndex = Math.floor(i * ratio);
+        downsampled[i] = inputData[srcIndex];
+      }
+
+      // Float32 (-1.0 to 1.0) -> Int16 (-32768 to 32767)
+      const pcmData = new Int16Array(downsampled.length);
+      for (let i = 0; i < downsampled.length; i++) {
+        const s = Math.max(-1, Math.min(1, downsampled[i]));
+        pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+
+      // 버퍼에 추가
+      state.audioBuffer.push(pcmData);
+
+      // 버퍼에 충분한 샘플이 모이면 전송
+      const totalSamples = state.audioBuffer.reduce((sum, arr) => sum + arr.length, 0);
+      if (totalSamples >= targetSamplesPerChunk) {
+        // 모든 버퍼를 하나로 합치기
+        const combinedLength = totalSamples;
+        const combinedBuffer = new Int16Array(combinedLength);
+        let offset = 0;
+
+        for (const buf of state.audioBuffer) {
+          combinedBuffer.set(buf, offset);
+          offset += buf.length;
         }
+
+        // 전송
+        state.ws.send(combinedBuffer.buffer);
+        console.log('📤 오디오 청크 전송:', combinedBuffer.length, 'samples (~' + (combinedBuffer.length / 16000).toFixed(2) + 's)');
+
+        // 버퍼 초기화
+        state.audioBuffer = [];
       }
     };
 
-    state.mediaRecorder.onstop = () => {
-      console.log('⏸️ MediaRecorder 중지됨');
-      updateRecordingStatus(false);
-    };
+    source.connect(processor);
+    processor.connect(state.audioContext.destination);
 
-    state.mediaRecorder.start(500);
+    state.audioWorkletNode = processor;
     state.isRecording = true;
     updateRecordingStatus(true);
-    console.log('🎙️ 녹음 시작');
+    console.log('🎙️ 녹음 시작 (RAW PCM 16kHz)');
 
   } catch(error){
     console.error('❌ 녹음 시작 에러:', error);
@@ -385,21 +428,35 @@ async function startRecording() {
 
 function stopRecording() {
   console.log('⏹️ 녹음 중지 요청');
-  
-  if (state.mediaRecorder && state.mediaRecorder.state === 'recording') {
-    state.mediaRecorder.stop();
-    console.log('✅ MediaRecorder 중지 신호 전송');
+
+  if (state.audioWorkletNode) {
+    state.audioWorkletNode.disconnect();
+    state.audioWorkletNode = null;
+    console.log('✅ AudioProcessor 중지');
   }
-  
+
+  if (state.audioContext && state.audioContext.state !== 'closed') {
+    state.audioContext.close();
+    state.audioContext = null;
+    console.log('✅ AudioContext 종료');
+  }
+
+  state.audioBuffer = [];
   state.isRecording = false;
   updateRecordingStatus(false);
 }
 
 function cleanupRecording() {
   console.log('🧹 리소스 정리 시작');
-  
-  if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
-    state.mediaRecorder.stop();
+
+  if (state.audioWorkletNode) {
+    state.audioWorkletNode.disconnect();
+    state.audioWorkletNode = null;
+  }
+
+  if (state.audioContext && state.audioContext.state !== 'closed') {
+    state.audioContext.close();
+    state.audioContext = null;
   }
 
   if (state.mediaStream) {
@@ -723,6 +780,22 @@ function setupElectronIntegration() {
       }
     });
 
+    ipcRenderer.on('auto-opacity-changed', (_event, value) => {
+      state.autoAdjustOpacity = value;
+      console.log('💾 자동 투명도 조정 변경됨:', value);
+      localStorage.setItem('autoAdjustOpacity', value ? 'true' : 'false');
+
+      // 자동 투명도가 활성화되면 즉시 배경 밝기 감지 실행
+      if (value) {
+        console.log('🚀 배경 밝기 감지 시작...');
+        setTimeout(() => detectBackgroundBrightness(), 100);
+      } else {
+        // 자동 투명도가 비활성화되면 수동 투명도로 복원
+        const currentOpacity = localStorage.getItem('panelOpacity') || 100;
+        updateOpacity(currentOpacity, false);
+      }
+    });
+
     // 설정 창에서 초기 상태 요청 시 응답
     ipcRenderer.on('request-state-for-settings', () => {
       ipcRenderer.send('send-state-to-settings', {
@@ -749,28 +822,6 @@ function setupElectronIntegration() {
       ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
     });
 
-    // 자동 투명도 조정 토글
-    ipcRenderer.on('auto-opacity-changed', (_event, enabled) => {
-      state.autoAdjustOpacity = enabled;
-      console.log('💾 자동 투명도 조정:', enabled ? '활성화' : '비활성화');
-      if (enabled) {
-        detectBackgroundBrightness();
-      } else {
-        // 비활성화 시 원래 투명도로 복원
-        const currentOpacity = localStorage.getItem('panelOpacity') || 100;
-        updateOpacity(currentOpacity, false);
-      }
-    });
-
-    // 윈도우가 닫히기 전에 정리
-    window.addEventListener('beforeunload', () => {
-      console.log('🧹 윈도우 종료 전 정리 시작');
-      // 녹음 정리
-      cleanupRecording();
-      // 모든 IPC 리스너 제거
-      ipcRenderer.removeAllListeners();
-    });
-
   } catch(e) {
     console.log('Electron IPC 사용 불가', e);
   }
@@ -781,23 +832,15 @@ async function init() {
   loadOpacity();
   loadTextSize();
   loadSettings();
-
-  // 자동 투명도 설정 불러오기
-  const savedAutoOpacity = localStorage.getItem('autoOpacity');
-  if (savedAutoOpacity === 'true') {
-    state.autoAdjustOpacity = true;
-    console.log('💾 자동 투명도 조정 활성화됨');
-  }
-
   updateServerStatus(false);
   updateRecordingStatus(false);
   setupEventListeners();
   setupElectronIntegration();
-
+  
   // 앱 시작 시 자동으로 녹음 시작
   console.log('🎬 자동 녹음 시작...');
   await startRecording();
-
+  
   console.log('✅ 초기화 완료 - Space 키로 녹음 시작/중지를 토글하세요');
 }
 

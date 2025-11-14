@@ -1,195 +1,324 @@
-# SimulStreaming
+# **This is not the complete project**
 
-SimulStreaming implements Whisper model for translation and transcription in
-simultaneous mode (which is known as *streaming* in the ASR community).
-SimulStreaming uses the state-of-the-art simultaneous policy AlignAtt, which
-makes it very fast and efficient.
+# SKKAI Audio AI
 
-SimulStreaming merges [Simul-Whisper](https://github.com/backspacetg/simul_whisper/) and [Whisper-Streaming](https://github.com/ufal/whisper_streaming) projects.
-Simul-Whisper implemented AlignAtt with Whisper, but only using large-v2 model
-for transcription. We extend it with support for translation and large-v3 model, and with beam search, prompt for injecting in-domain
-terminology, and context across the 30-second processing windows. Moreover,
-Simul-Whisper implements only less realistic simulation on sentence-segmented
-speech. Therefore, we use the interface of Whisper-Streaming for the long-form input
-simulation, both computationally unaware and aware, and from both audio file and
-simple demo TCP server that can be connected to microphone.
+## 처음이면 이것부터
 
-Moreover, SimulStreaming adds a machine translation model EuroLLM in a cascade, with LocalAgreement simultaneous policy, system
-prompt, and in-context example.
+### 1. 초기 설정
 
-SimulStreaming originates as [Charles University (CUNI) submission to the IWSLT
-2025 Simultaneous Shared Task](https://arxiv.org/abs/2506.17077). The results show that this system is extremely robust
-and high quality. It is among the top performing systems in IWSLT 2025
-Simultaneous Shared Task.
+```bash
 
-## Installation
+# 모르겠으면 저한테 물어보세요 !! 아래 순서대로 차근차근 하시면 됩니다. 
 
-The direct speech-to-text Whisper part can be installed with
+# 이건 걍 Terminal에서 경고 뜨는거랑 실행했을 때 오류나는거 지피티한테 던져주면 솔루션 주는데 이거 바탕으로 깔거 깔면 돼요.
 
-```
+# Python 가상환경 생성 (권장)
+conda create -n whisper
+
+# 가상환경 활성화
+conda activate whisper
+
+# 필수 패키지 설치
 pip install -r requirements.txt
+
+# 이건 진웅님이 이메일로 주신 거 있잖아요. 그거 다운로드 받아서 (크기 너무 크면 작은것만 다운 받고) weights 폴더 새로 만들어서 그 안에 넣으면 됩니다. 
+# 그리고 audio_data 폴더 새로 만들어서 그 안에 실행하고 싶은 오디오 데이터 넣어요. 
+
+# 폴더 준비
+'audio_data', 'weights' 폴더 직접 만들기
+cd SKKAI_VOICE_AI_whisper
+mkdir audio_data
+mkdir weights
+
+SKKAI_VOICE_AI_whisper/
+├── STT.py              
+├── audio_data/         # 오디오 파일 디렉토리. 변환하고 싶은 오디오 파일은 해당 폴더 내부에 위치시킬 것 <-- 여기에 audio_data 폴더 만들기 
+├── weights/           # 사전학습 가중치 디렉토리 <--여기에 weights 폴더 만들기 
+├── whisper/           # 실제 모델 폴더
+├── README.md          # 이 파일
+└──  ...
+
+# 아래는 그 진웅님이 보내주신 파일 다운 받는 코드인데 그냥 수작업으로 얻었으니 건너 뛰어도 됨. 
+
+# 가중치 준비
+python weight_download.py
+
+``` 
+
+### 2. 기본 사용법
+
+```bash
+# 기본 실행
+python STT.py --model base --audio "파일명" --language ko # <-- 이렇게 작성해서 실행하면 됩니다. 그리고 뒤에 --language는 안써도 돼요. 자동으로 감지해서 변환되도록 하고 있기 때문에 --> python STT.py --model base --audio "파일명" 이렇게 하면 됩니다. 
+
+# 그리고 동방 데스크탑에서 할 때는 py -3.10 .\STT.light.py --model base --audio "audio23" 이렇게 앞에 붙여주셔야 해요. 
+
+# 상세 정보와 함께
+python STT.py --model medium --audio "파일명" --language ko --info
+
+# 사용 가능한 모델 목록 확인
+python STT.py --list-models
+
+# 아래는 안읽어봐도 됩니다. 이 정도만 알아두시면 돼요 ! 심심하면 읽어보셈
 ```
 
-The comments in `requirements.txt` document the origin of dependencies. There is originally WhisperStreaming code inserted in the `whisper_streaming` dir. It is simplified and refactored.
-Simul-Whisper code is in `simul_whisper`, it includes the [original Whisper](https://github.com/openai/whisper) code adapted for SimulWhisper in `simul_whispre/whisper`.
+# 🎤 Whisper STT 최종 통합 버전
 
-**Lighter installation**
+OpenAI Whisper를 활용한 **오프라인 음성 인식(STT)** 도구입니다.  
+**macOS**와 **Windows** 모두에서 안정적으로 작동하도록 최적화되었습니다.
 
-For slightly lighter installation,  remove `torchaudio` from `requirements.txt`. Then you can not use the Silero VAD controller (`--vac` option).
+> 🔧 **수정된 버전**: 이 코드는 OpenAI Whisper를 기반으로 오프라인 환경과 실시간 STT용으로 최적화되었습니다.
 
-**Text-to-Text Translation**
+## ✨ 주요 기능
 
-Follow [translate/README.txt](translate/README.txt).
+- 🛡️ **메모리 안전성**: Segmentation Fault 방지 및 자동 메모리 관리
+- 🌍 **크로스 플랫폼**: macOS (Intel/Apple Silicon) + Windows 완벽 지원  
+- 📁 **스마트 파일 탐지**: 확장자 자동 감지, 한글 파일명 지원
+- 🔧 **모델별 안정성**: 안전한 모델 추천 및 위험 모델 경고
+- 📊 **청크 처리**: 긴 오디오 자동 분할 처리
+- 🎵 **다양한 포맷**: mp3, wav, flac, m4a, ogg, mp4, aac 지원
 
-## Usage 
+## 📋 명령어 옵션
 
-### Real-time simulation from audio file
+| 옵션 | 기본값 | 설명 |
+|------|--------|------|
+| `--model` | `base` | 사용할 모델 (tiny, base, small, medium, large-v1/v2/v3) |
+| `--audio` | **필수** | 오디오 파일명 (확장자 제외) |
+| `--language` | `ko` | 언어 코드 (ko, en, ja, zh 등) |
+| `--audio_dir` | `audio_data` | 오디오 파일 디렉토리 |
+| `--chunk_duration` | `30` | 청크 길이(초) |
+| `--force` | - | 위험한 모델도 강제 사용 |
+| `--info` | - | 상세 정보 출력 |
+| `--list-models` | - | 모델 목록 출력 |
 
+## 🎯 모델 선택 가이드
 
-```
-usage: simulstreaming_whisper.py [-h] [--min-chunk-size MIN_CHUNK_SIZE] [--lan LAN] [--task {transcribe,translate}] [--vac] [--vac-chunk-size VAC_CHUNK_SIZE]
-                                 [-l {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--model_path MODEL_PATH] [--beams BEAMS] [--decoder DECODER] [--audio_max_len AUDIO_MAX_LEN]
-                                 [--audio_min_len AUDIO_MIN_LEN] [--frame_threshold FRAME_THRESHOLD] [--cif_ckpt_path CIF_CKPT_PATH] [--never_fire | --no-never_fire]
-                                 [--init_prompt INIT_PROMPT] [--static_init_prompt STATIC_INIT_PROMPT] [--max_context_tokens MAX_CONTEXT_TOKENS] [--start_at START_AT] [--comp_unaware]
-                                 audio_path
+### 📊 모델별 특성
 
-options:
-  -h, --help            show this help message and exit
-  -l {DEBUG,INFO,WARNING,ERROR,CRITICAL}, --log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
-                        Set the log level
+| 모델 | 크기 | 메모리 | 정확도 | 속도 | 안정성 | 권장 용도 |
+|------|------|--------|--------|------|--------|----------|
+| **tiny** | 100MB | ~150MB | 낮음 | 매우 빠름 | ✅ 안전 | 빠른 테스트, 실시간 |
+| **base** | 300MB | ~400MB | 보통 | 빠름 | ✅ 안전 | 일반적 용도 |
+| **small** | 800MB | ~1GB | 좋음 | 보통 | ✅ 안전 | 품질 중시 |
+| **medium** | 2GB | ~3GB | 매우 좋음 | 느림 | ✅ 안전 | 고품질 필요 |
+| **large-v1/v2/v3** | 3.5GB | ~5GB | 최고 | 매우 느림 | ⚠️ 불안정 | 최고 품질 (주의) |
 
-WhisperStreaming processor arguments (shared for simulation from file and for the server):
-  --min-chunk-size MIN_CHUNK_SIZE
-                        Minimum audio chunk size in seconds. It waits up to this time to do processing. If the processing takes shorter time, it waits, otherwise it processes the whole
-                        segment that was received by this time.
-  --lan LAN, --language LAN
-                        Source language code, e.g. en, de, cs, or auto for automatic language detection from speech.
-  --task {transcribe,translate}
-                        Transcribe or translate.
-  --vac                 Use VAC = voice activity controller. Recommended. Requires torch.
-  --vac-chunk-size VAC_CHUNK_SIZE
-                        VAC sample size in seconds.
+### 💡 권장 사항
 
-Whisper arguments:
-  --model_path MODEL_PATH
-                        The file path to the Whisper .pt model. If not present on the filesystem, the model is downloaded automatically.
-  --beams BEAMS, -b BEAMS
-                        Number of beams for beam search decoding. If 1, GreedyDecoder is used.
-  --decoder DECODER     Override automatic selection of beam or greedy decoder. If beams > 1 and greedy: invalid.
+- **첫 사용**: `tiny` 또는 `base` 모델로 시작
+- **일반 용도**: `base` 또는 `small` 모델 
+- **고품질**: `medium` 모델 (메모리 충분한 경우)
+- **최고 품질**: `large` 모델 (`--force` 옵션 필요, 불안정 위험)
 
-Audio buffer:
-  --audio_max_len AUDIO_MAX_LEN
-                        Max length of the audio buffer, in seconds.
-  --audio_min_len AUDIO_MIN_LEN
-                        Skip processing if the audio buffer is shorter than this length, in seconds. Useful when the --min-chunk-size is small.
-
-AlignAtt argument:
-  --frame_threshold FRAME_THRESHOLD
-                        Threshold for the attention-guided decoding. The AlignAtt policy will decode only until this number of frames from the end of audio. In frames: one frame is 0.02
-                        seconds for large-v3 model.
-
-Truncation of the last decoded word (from Simul-Whisper):
-  --cif_ckpt_path CIF_CKPT_PATH
-                        The file path to the Simul-Whisper's CIF model checkpoint that detects whether there isend of word at the end of the chunk. If not, the last decoded space-
-                        separated word is truncated because it is often wrong -- transcribing a word in the middle.The CIF model adapted for the Whisper model version should be used. Find
-                        the models in https://github.com/backspacetg/simul_whisper/tree/main/cif_models . Note that there is no model for large-v3.
-  --never_fire, --no-never_fire
-                        Override the CIF model. If True, the last word is NEVER truncated, no matter what the CIF model detects. . If False: if CIF model path is set, the last word is
-                        SOMETIMES truncated, depending on the CIF detection. Otherwise, if the CIF model path is not set, the last word is ALWAYS trimmed. (default: False)
-
-Prompt and context:
-  --init_prompt INIT_PROMPT
-                        Init prompt for the model. It should be in the target language.
-  --static_init_prompt STATIC_INIT_PROMPT
-                        Do not scroll over this text. It can contain terminology that should be relevant over all document.
-  --max_context_tokens MAX_CONTEXT_TOKENS
-                        Max context tokens for the model. Default is 0.
-
-Arguments for simulation from file:
-  audio_path            Filename of 16kHz mono channel wav, on which live streaming is simulated.
-  --start_at START_AT   Start processing audio at this time.
-  --comp_unaware        Computationally unaware simulation.
-```
-
-Example:
+## 📁 파일 구조
 
 ```
-python3 simulstreaming_whisper.py audio.wav --language cs  --task translate --comp_unaware
+whisper/
+├── STT.py              # 메인 실행 파일
+├── audio_data/         # 오디오 파일 디렉토리
+│   ├── 파일1.mp3
+│   ├── 파일2.wav
+│   └── ...
+├── whisper/           # Whisper 라이브러리 (수정됨)
+└── README.md          # 이 파일
 ```
 
-Simulation modes:
+## 🎵 지원 오디오 형식
 
-- default mode, no special option: real-time simulation from file, computationally aware. The chunk size is `MIN_CHUNK_SIZE` or larger, if more audio arrived during last update computation.
+- **MP3** (.mp3)
+- **WAV** (.wav) 
+- **FLAC** (.flac)
+- **M4A** (.m4a)
+- **OGG** (.ogg)
+- **MP4** (.mp4)
+- **AAC** (.aac)
 
-- `--comp_unaware` option: computationally unaware simulation. It means that the timer that counts the emission times "stops" when the model is computing. The chunk size is always `MIN_CHUNK_SIZE`. The latency is caused only by the model being unable to confirm the output, e.g. because of language ambiguity etc., and not because of slow hardware or suboptimal implementation. We implement this feature for finding the lower bound for latency.
+## 🌍 지원 언어
 
-- `--start_at START_AT`: Start processing audio at this time. The first update receives the whole audio by `START_AT`. It is useful for debugging, e.g. when we observe a bug in a specific time in audio file, and want to reproduce it quickly, without long waiting.
+주요 언어 코드:
 
-- offline mode, to process whole audio with maximum quality, is not available yet. Instead, try large `--min-chunk-size` and `--frame-threshold`.
+| 언어 | 코드 | 언어 | 코드 |
+|------|------|------|------|
+| 한국어 | `ko` | 영어 | `en` |
+| 일본어 | `ja` | 중국어 | `zh` |
+| 스페인어 | `es` | 프랑스어 | `fr` |
+| 독일어 | `de` | 러시아어 | `ru` |
 
+> 💡 언어를 지정하지 않으면 자동 감지됩니다.
 
-### Server -- real-time from mic 
+## 📖 사용 예시
 
-The entry point `simulstreaming_whisper_server.py` has the same model options as `simulstreaming_whisper.py`, plus `--host` and `--port` of the TCP connection and the `--warmup-file`. The warmup file is decoded by the Whisper backend after the model is loaded because without that, processing of the very the first input chunk may take longer.
+### 기본 사용
 
-See the help message (`-h` option).
+```bash
+# 한국어 음성 인식
+python STT.py --model base --audio "회의록_2024" --language ko
 
-**Linux** client example:
+# 영어 음성 인식  
+python STT.py --model small --audio "interview_english" --language en
 
-```
-arecord -f S16_LE -c1 -r 16000 -t raw -D default | nc localhost 43001
-```
-
-- `arecord` sends realtime audio from a sound device (e.g. mic), in raw audio format -- 16000 sampling rate, mono channel, S16_LE -- signed 16-bit integer low endian. (Or other operating systems, use another alternative)
-
-- nc is netcat with server's host and port
-
-**Windows/Mac**: `ffmpeg` may substitute `arecord`. Or use the solutions proposed in Whisper-Streaming pull requests [#111](https://github.com/ufal/whisper_streaming/pull/111) and [#123](https://github.com/ufal/whisper_streaming/pull/123).
-
-
-
-### Output format
-
-This is example of the output format of the simulation from file. The output from the server is the same except that the first space-separated column is not there.
-
-```
-1200.0000 0 1200  And so
-2400.0000 1200 2400  my fellow Americans
-3600.0000 2400 3600 ,
-4800.0000 3600 4800  ask not
-6000.0000 4800 6000  what
-7200.0000 6000 7200  your country can do
-8400.0000 7200 8400  for you,
-9600.0000 8400 9600  ask what you
-10800.0000 9600 10800  can do for your country
-11000.0000 10800 11000 .
+# 자동 언어 감지
+python STT.py --model base --audio "multilingual_audio"
 ```
 
-It's space-separated. The first three columns are:
-- column 1: the emission time of that line, in miliseconds. In `--comp_unaware` mode, it's the simulated time. In server, this column is not there.
-- columns 2-3: the beginning and end timestamp of the line in original audio. (TODO: it should be, currently it is very rough approximation.)
-- columns 4-: This column starts either with a space, if the previous line had to be appended with a space, or with a character that has to be appended to the previous line (like comma or dot).
+### 고급 사용
 
+```bash
+# 상세 정보와 함께 실행
+python STT.py --model medium --audio "긴_강의" --language ko --info
 
+# 청크 크기 조정 (긴 오디오용)
+python STT.py --model small --audio "장시간_녹음" --chunk_duration 60
 
-## 📣 Feedback Welcome!
+# 위험한 대형 모델 강제 사용
+python STT.py --model large-v3 --audio "고품질_필요" --language ko --force
+```
 
-We, the authors of SimulStreaming from Charles University, are committed to
-improving our research and the tool itself. Your experience as a user is
-invaluable to us --- it can help to shape upcoming features, licensing models, and support services. 
+### 파일명 특수 문자 처리
 
-To better understand your needs and guide the future of
-SimulStreaming, we kindly ask the users, especially commercial, to fill out this **[questionnaire](https://forms.cloud.microsoft/e/7tCxb4gJfB).**
+```bash
+# 괄호나 공백이 포함된 파일명
+python STT.py --model base --audio "노이즈없는단일화자(한어)2" --language ko
 
-## 📄 Licence
+# Windows에서 특수 문자
+python STT.py --model base --audio "회의_2024-10-02(최종)" --language ko
+```
 
-Now under MIT.
+## 🛠️ 문제 해결
 
-## 🤝 Contributions
+### 자주 발생하는 문제
 
-Contributions to SimulStreaming are welcome. 
+#### 1. Segmentation Fault
+```bash
+# 해결 방법: 더 작은 모델 사용
+python STT.py --model tiny --audio "파일명" --language ko
 
-## ✉️ Contact
+# 또는 환경 변수 설정 후 실행 (macOS)
+export OMP_NUM_THREADS=1
+python STT.py --model base --audio "파일명" --language ko
+```
 
-[Dominik Macháček](https://ufal.mff.cuni.cz/dominik-machacek/), machacek@ufal.mff.cuni.cz
+#### 2. 파일을 찾을 수 없음
+```bash
+# 파일 존재 확인
+ls audio_data/
 
+# 확장자 없이 파일명만 입력
+python STT.py --model base --audio "파일명만" --language ko  # ✅ 맞음
+python STT.py --model base --audio "파일명.mp3" --language ko  # ❌ 틀림
+```
+
+#### 3. 메모리 부족
+```bash
+# 더 작은 모델 사용
+python STT.py --model tiny --audio "파일명" --language ko
+
+# 청크 크기 줄이기
+python STT.py --model base --audio "파일명" --chunk_duration 15
+```
+
+#### 4. 라이브러리 오류
+```bash
+# 가상환경 재생성
+rm -rf .venv
+python -m venv .venv
+source .venv/bin/activate  # macOS
+# 또는
+.venv\Scripts\activate     # Windows
+
+pip install torch openai-whisper librosa
+```
+
+### 플랫폼별 최적화
+
+#### macOS
+```bash
+# Apple Silicon 최적화가 자동 적용됩니다
+# M1/M2 Mac에서 최적 성능을 위해 base 모델 권장
+python STT.py --model base --audio "파일명" --language ko
+```
+
+#### Windows  
+```bash
+# GPU 사용 비활성화로 안정성 확보
+# medium 모델까지 안정적 사용 가능
+python STT.py --model medium --audio "파일명" --language ko
+```
+
+## 📈 성능 튜닝
+
+### 속도 우선
+```bash
+python STT.py --model tiny --audio "파일명" --language ko
+```
+
+### 품질 우선  
+```bash
+python STT.py --model medium --audio "파일명" --language ko --info
+```
+
+### 안정성 우선
+```bash
+python STT.py --model base --audio "파일명" --language ko
+```
+
+## 🔧 고급 설정
+
+### 환경 변수 (선택사항)
+
+```bash
+# macOS 최적화
+export OMP_NUM_THREADS=1
+export VECLIB_MAXIMUM_THREADS=1
+
+# Windows 최적화  
+set OMP_NUM_THREADS=1
+set MKL_NUM_THREADS=1
+```
+
+## 📄 라이선스
+
+이 프로젝트는 OpenAI Whisper의 수정 버전으로, 원본 라이선스를 따릅니다.
+
+---
+
+## 🎉 성공적인 실행 예시
+
+```bash
+$ python STT.py --model base --audio "테스트파일" --language ko
+
+🎤 Whisper STT 최종 통합 버전 (크로스 플랫폼)
+==================================================
+🖥️  플랫폼: Darwin (Apple Silicon)
+🔧 환경 최적화: macOS 모드
+📁 오디오 파일 검색: 테스트파일
+✅ 파일 발견: 테스트파일.mp3
+📊 파일 크기: 0.4MB
+
+🎵 오디오 로드 중...
+✅ librosa로 오디오 로드: 5.2초
+📥 base 모델 로드 중...
+📊 예상 크기: 300MB, 정확도: 보통
+✅ base 로드 성공
+
+🔒 안전 모드로 음성 인식 시작...
+
+🗣️ 음성 인식 시작 (언어: ko)...
+
+==================================================
+🎉 음성 인식 완료!
+🌍 감지 언어: ko
+📝 인식 결과:
+   안녕하세요. 이것은 테스트 음성 파일입니다.
+==================================================
+🧹 모델 메모리 정리 완료
+```
+
+---
+
+## 📋 원본 OpenAI Whisper 정보
+
+이 수정 버전은 다음 원본을 기반으로 합니다:
+- **Blog**: [OpenAI Whisper](https://openai.com/blog/whisper)
+- **Paper**: [Robust Speech Recognition via Large-Scale Weak Supervision](https://arxiv.org/abs/2212.04356)
+- **Original Repository**: [openai/whisper](https://github.com/openai/whisper)

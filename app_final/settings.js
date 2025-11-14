@@ -5,6 +5,8 @@ const DOM = {
   recordingIndicatorMini: document.getElementById('recordingIndicatorMini'),
   closeSettings: document.getElementById('closeSettings'),
   serverUrlInput: document.getElementById('serverUrlInput'),
+  langSelect: document.getElementById('langSelect'),
+  polishCheckbox: document.getElementById('polishCheckbox'),
   modeTranslateOnly: document.getElementById('modeTranslateOnly'),
   modeTranscriptOnly: document.getElementById('modeTranscriptOnly'),
   modeBoth: document.getElementById('modeBoth'),
@@ -50,6 +52,16 @@ function loadSettings() {
     DOM.serverUrlInput.value = savedUrl;
   }
 
+  const savedLang = localStorage.getItem('langPreference');
+  if (savedLang) {
+    DOM.langSelect.value = savedLang;
+  }
+
+  const savedPolish = localStorage.getItem('polishEnabled');
+  if (savedPolish !== null) {
+    DOM.polishCheckbox.checked = savedPolish === 'true';
+  }
+
   const savedDisplayMode = localStorage.getItem('displayMode') || 'both';
   if (savedDisplayMode === 'translateOnly') {
     DOM.modeTranslateOnly.checked = true;
@@ -65,7 +77,7 @@ function loadSettings() {
     DOM.opacityValue.textContent = savedOpacity + '%';
   }
 
-  const savedAutoOpacity = localStorage.getItem('autoOpacity');
+  const savedAutoOpacity = localStorage.getItem('autoAdjustOpacity');
   if (savedAutoOpacity !== null) {
     DOM.autoOpacityCheckbox.checked = savedAutoOpacity === 'true';
   }
@@ -104,7 +116,7 @@ function setupEventListeners() {
 
   // 자동 투명도 조정 변경
   DOM.autoOpacityCheckbox.addEventListener('change', (e) => {
-    localStorage.setItem('autoOpacity', e.target.checked);
+    localStorage.setItem('autoAdjustOpacity', e.target.checked);
     ipcRenderer.send('auto-opacity-changed', e.target.checked);
   });
 
@@ -121,6 +133,18 @@ function setupEventListeners() {
     const value = e.target.value.trim();
     localStorage.setItem('serverUrl', value);
     ipcRenderer.send('server-url-changed', value);
+  });
+
+  // 언어 설정 변경
+  DOM.langSelect.addEventListener('change', (e) => {
+    localStorage.setItem('langPreference', e.target.value);
+    ipcRenderer.send('lang-changed', e.target.value);
+  });
+
+  // 다듬기 설정 변경
+  DOM.polishCheckbox.addEventListener('change', (e) => {
+    localStorage.setItem('polishEnabled', e.target.checked);
+    ipcRenderer.send('polish-changed', e.target.checked);
   });
 
   // 표시 모드 변경
