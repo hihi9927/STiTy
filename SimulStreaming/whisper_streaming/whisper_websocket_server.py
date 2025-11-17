@@ -359,8 +359,9 @@ def main_websocket_server(factory, add_args):
             # 풀에서 ASR 가져오기
             pool_asr, pool_online = asr_pool[asr_index]
 
-            # 새로운 Online Processor 생성 (기존 것 재사용하면 상태 꼬일 수 있음)
-            _, client_online = factory(args)
+            # 풀의 ASR을 사용하되, 새로운 OnlineASRProcessor 인스턴스 생성
+            # (기존 ASR 모델을 재사용하여 GPU 메모리 절약)
+            client_online = type(pool_online)(pool_asr)
 
             # VAC 설정 적용
             if args.vac:

@@ -32,6 +32,9 @@ class LibriSpeechStreamingClient:
         self.interval_ms = interval_ms
         self.chunk_size = chunk_size
         self.sample_rate = 16000
+        self.current_utt_id = None
+        self.current_gt = None
+        self.chunk_send_time = {}  # Track when each chunk was sent
 
     def get_chapter_files(self, subset, speaker_id, chapter_id):
         """
@@ -83,6 +86,7 @@ class LibriSpeechStreamingClient:
         """Receive and display server responses"""
         try:
             while True:
+                recv_time = time.time()
                 response = await websocket.recv()
                 try:
                     data = json.loads(response)
@@ -104,14 +108,31 @@ class LibriSpeechStreamingClient:
                     elif msg_type == 'final':
                         # Final transcription result
                         original = data.get('original', '')
+                        language = data.get('language', 'unknown')
                         ko = data.get('ko', '')
                         en = data.get('en', '')
-                        print(f"\n  [Final] {original}")
-                        if ko:
-                            print(f"    🇰🇷 KO: {ko}")
-                        if en:
-                            print(f"    🇺🇸 EN: {en}")
-                        print()
+
+                        # Calculate latency if we have send time info
+                        latency_str = ""
+                        if self.current_utt_id in self.chunk_send_time:
+                            send_time = self.chunk_send_time[self.current_utt_id]
+                            latency = (recv_time - send_time) * 1000  # ms
+                            latency_str = f" [Latency: {latency:.0f}ms]"
+
+                        # Print GT first
+                        if self.current_gt:
+                            print(f"\n📝 GT: {self.current_gt}")
+
+                        # Print Whisper recognized original
+                        print(f"🎙️  Whisper ({language.upper()}): {original}{latency_str}")
+
+                        # Print translation
+                        if language == 'ko' and en:
+                            print(f"🇺🇸 Translation (EN): {en}")
+                        elif language == 'en' and ko:
+                            print(f"🇰🇷 Translation (KO): {ko}")
+
+                        print(f"-" * 70)
                 except json.JSONDecodeError:
                     pass
         except websockets.exceptions.ConnectionClosed:
@@ -156,6 +177,10 @@ class LibriSpeechStreamingClient:
                     # Extract utterance ID from filename
                     utt_id = Path(flac_file).stem
 
+                    # Set current utterance info for response handler
+                    self.current_utt_id = utt_id
+                    self.current_gt = transcripts.get(utt_id, None)
+
                     # Read audio file
                     audio, sr = sf.read(flac_file)
 
@@ -173,12 +198,10 @@ class LibriSpeechStreamingClient:
                             audio
                         )
 
-                    # Show ground truth transcript
-                    if show_transcript and utt_id in transcripts:
+                    # Show file info (GT will be shown when receiving response)
+                    if show_transcript:
                         print(f"\n[File {file_idx}/{len(flac_files)}] {utt_id}")
-                        print(f"📝 Ground Truth: {transcripts[utt_id]}")
-                        print(f"⏱️  Duration: {len(audio)/self.sample_rate:.2f}s")
-                        print(f"-" * 70)
+                        print(f"⏱️  Audio Length: {len(audio)/self.sample_rate:.2f}s")
 
                     # Stream audio in chunks
                     num_chunks = (len(audio) + self.chunk_size - 1) // self.chunk_size
@@ -188,9 +211,13 @@ class LibriSpeechStreamingClient:
                         end_idx = min(start_idx + self.chunk_size, len(audio))
                         chunk = audio[start_idx:end_idx]
 
-                        # Convert to bytes (int16 format)
-                        chunk_int16 = (chunk * 32767).astype(np.int16)
-                        chunk_bytes = chunk_int16.tobytes()
+                        # Convert to bytes (Float32 format)
+                        chunk_float32 = chunk.astype(np.float32)
+                        chunk_bytes = chunk_float32.tobytes()
+
+                        # Record send time for the first chunk
+                        if chunk_idx == 0:
+                            self.chunk_send_time[utt_id] = time.time()
 
                         # Send chunk
                         await websocket.send(chunk_bytes)
