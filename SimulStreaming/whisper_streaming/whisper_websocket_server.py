@@ -25,6 +25,7 @@ class WebSocketHandler:
         self.is_first = True
         self.audio_buffer = []
         self.running = False
+        self.current_utt_id = None  # Track current utterance ID
 
     async def send_message(self, message_dict):
         """Send JSON message to client"""
@@ -135,6 +136,10 @@ class WebSocketHandler:
                 'language': lang
             }
 
+            # utterance_id 추가 (클라이언트가 매칭에 사용)
+            if self.current_utt_id:
+                result_msg['utt_id'] = self.current_utt_id
+
             # 번역 결과 추가 (선택적)
             if ko_text:
                 result_msg['ko'] = ko_text
@@ -224,7 +229,9 @@ class WebSocketHandler:
                         msg_type = data.get('type', '')
 
                         if msg_type == 'start':
-                            logger.info("Received start command")
+                            # Set utterance ID for upcoming audio
+                            self.current_utt_id = data.get('utt_id', None)
+                            logger.info(f"Received start command for utterance: {self.current_utt_id}")
                             await self.send_message({
                                 'type': 'ready',
                                 'message': 'Ready to receive audio'
@@ -320,15 +327,8 @@ def main_websocket_server(factory, add_args):
 
     # Start WebSocket server
     async def server_handler(websocket):
-        # 새로운 Online Processor 생성 (각 클라이언트마다)
-        _, client_online = factory(args)
-
-        # VAC 설정 적용
-        if args.vac:
-            from whisper_streaming.vac_online_processor import VACOnlineASRProcessor
-            client_online = VACOnlineASRProcessor(args.min_chunk_size, client_online)
-
-        await websocket_server(websocket, client_online, min_chunk)
+        # warmup된 online 객체를 직접 사용 (단일 클라이언트만 지원)
+        await websocket_server(websocket, online, min_chunk)
 
     async def main():
         logger.info(f'Starting WebSocket server on ws://{args.host}:{args.port}')

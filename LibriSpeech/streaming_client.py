@@ -35,6 +35,9 @@ class LibriSpeechStreamingClient:
         self.current_utt_id = None
         self.current_gt = None
         self.chunk_send_time = {}  # Track when each chunk was sent
+        self.gt_map = {}  # Map utterance_id -> ground truth
+        self.output_lines = []  # Collect output lines for saving to file
+        self.current_file_idx = None  # Track current file index for output
 
     def get_chapter_files(self, subset, speaker_id, chapter_id):
         """
@@ -107,32 +110,50 @@ class LibriSpeechStreamingClient:
                         print('\r', end='')
                     elif msg_type == 'final':
                         # Final transcription result
+                        utt_id = data.get('utt_id', None)
                         original = data.get('original', '')
                         language = data.get('language', 'unknown')
                         ko = data.get('ko', '')
                         en = data.get('en', '')
 
-                        # Calculate latency if we have send time info
+                        # Calculate latency
                         latency_str = ""
-                        if self.current_utt_id in self.chunk_send_time:
-                            send_time = self.chunk_send_time[self.current_utt_id]
-                            latency = (recv_time - send_time) * 1000  # ms
+                        if utt_id and utt_id in self.chunk_send_time:
+                            send_time = self.chunk_send_time[utt_id]
+                            latency = (recv_time - send_time) * 1000
                             latency_str = f" [Latency: {latency:.0f}ms]"
 
-                        # Print GT first
-                        if self.current_gt:
-                            print(f"\n📝 GT: {self.current_gt}")
+                        # Print GT on first result for this utterance
+                        if utt_id and utt_id in self.gt_map and utt_id not in getattr(self, 'printed_gts', set()):
+                            gt_text = self.gt_map[utt_id]
+                            print(f"\n📝 GT: {gt_text}")
 
-                        # Print Whisper recognized original
-                        print(f"🎙️  Whisper ({language.upper()}): {original}{latency_str}")
+                            # Add to output file
+                            if self.current_file_idx is not None:
+                                self.output_lines.append(f"[File {self.current_file_idx}] {utt_id}")
+                                self.output_lines.append(f"GT: {gt_text}")
+
+                            if not hasattr(self, 'printed_gts'):
+                                self.printed_gts = set()
+                            self.printed_gts.add(utt_id)
+
+                        # Print Whisper result
+                        whisper_line = f"Whisper ({language.upper()}): {original}{latency_str}"
+                        print(f"🎙️  {whisper_line}")
+                        self.output_lines.append(whisper_line)
 
                         # Print translation
                         if language == 'ko' and en:
-                            print(f"🇺🇸 Translation (EN): {en}")
+                            trans_line = f"Translation (EN): {en}"
+                            print(f"🇺🇸 {trans_line}")
+                            self.output_lines.append(trans_line)
                         elif language == 'en' and ko:
-                            print(f"🇰🇷 Translation (KO): {ko}")
+                            trans_line = f"Translation (KO): {ko}"
+                            print(f"🇰🇷 {trans_line}")
+                            self.output_lines.append(trans_line)
 
                         print(f"-" * 70)
+                        self.output_lines.append("")  # Empty line between results
                 except json.JSONDecodeError:
                     pass
         except websockets.exceptions.ConnectionClosed:
@@ -177,9 +198,12 @@ class LibriSpeechStreamingClient:
                     # Extract utterance ID from filename
                     utt_id = Path(flac_file).stem
 
-                    # Set current utterance info for response handler
-                    self.current_utt_id = utt_id
-                    self.current_gt = transcripts.get(utt_id, None)
+                    # Set current file index for output
+                    self.current_file_idx = file_idx
+
+                    # Store GT in map for response handler
+                    if utt_id in transcripts:
+                        self.gt_map[utt_id] = transcripts[utt_id]
 
                     # Read audio file
                     audio, sr = sf.read(flac_file)
@@ -202,6 +226,12 @@ class LibriSpeechStreamingClient:
                     if show_transcript:
                         print(f"\n[File {file_idx}/{len(flac_files)}] {utt_id}")
                         print(f"⏱️  Audio Length: {len(audio)/self.sample_rate:.2f}s")
+
+                    # Send start message with utterance ID
+                    await websocket.send(json.dumps({
+                        'type': 'start',
+                        'utt_id': utt_id
+                    }))
 
                     # Stream audio in chunks
                     num_chunks = (len(audio) + self.chunk_size - 1) // self.chunk_size
@@ -255,6 +285,13 @@ class LibriSpeechStreamingClient:
                 print(f"Total chunks sent: {total_chunks_sent}")
                 print(f"Total duration: {total_chunks_sent * self.chunk_size / self.sample_rate:.2f}s")
                 print(f"{'='*70}\n")
+
+                # Save results to file
+                if self.output_lines:
+                    output_filename = f"streaming_results_{subset}_{speaker_id}_{chapter_id}.txt"
+                    with open(output_filename, 'w', encoding='utf-8') as f:
+                        f.write('\n'.join(self.output_lines))
+                    print(f"Results saved to: {output_filename}\n")
 
         except websockets.exceptions.WebSocketException as e:
             print(f"WebSocket error: {e}")
