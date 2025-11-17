@@ -243,6 +243,24 @@ class WebSocketHandler:
             import traceback
             traceback.print_exc()
         finally:
+            # 즉시 디코딩 중단 및 정리
+            logger.info("WebSocket connection closing, flushing ASR processor...")
+            self.running = False
+
+            # ASR 프로세서 정리 (디코딩 즉시 중단)
+            try:
+                # 버퍼 비우기
+                self.audio_buffer = []
+
+                # ASR 디코딩 즉시 종료
+                if hasattr(self.online_asr_proc, 'finish'):
+                    self.online_asr_proc.finish()
+                    logger.info("ASR processor finished and flushed")
+                else:
+                    logger.info("ASR processor flushed (no finish method)")
+            except Exception as e:
+                logger.error(f"Error flushing ASR processor: {e}")
+
             logger.info("WebSocket connection closed")
 
 
