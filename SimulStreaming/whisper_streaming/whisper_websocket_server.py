@@ -318,9 +318,61 @@ def main_websocket_server(factory, add_args):
     else:
         logger.warning(msg)
 
+    # ASR Pool 생성 (다중 클라이언트 지원)
+    # 미리 여러 개의 ASR 인스턴스를 만들어서 풀에 저장
+    MAX_CLIENTS = 2  # 동시 접속 가능한 최대 클라이언트 수
+    asr_pool = []
+
+    logger.info(f"Creating ASR pool with {MAX_CLIENTS} instances...")
+    for i in range(MAX_CLIENTS):
+        pool_asr, pool_online = factory(args)
+
+        # Warmup
+        if args.warmup_file and os.path.isfile(args.warmup_file):
+            a = load_audio_chunk(args.warmup_file, 0, 1)
+            pool_asr.warmup(a)
+
+        asr_pool.append((pool_asr, pool_online))
+        logger.info(f"Created ASR instance {i+1}/{MAX_CLIENTS}")
+
+    # 사용 가능한 ASR 추적
+    available_asr = list(range(MAX_CLIENTS))  # [0, 1]
+    asr_lock = asyncio.Lock()
+
     # Start WebSocket server
     async def server_handler(websocket):
-        await websocket_server(websocket, online, min_chunk)
+        # 사용 가능한 ASR 가져오기
+        async with asr_lock:
+            if not available_asr:
+                logger.warning(f"No available ASR for client {websocket.remote_address}, rejecting connection")
+                await websocket.send(json.dumps({
+                    'type': 'error',
+                    'message': f'Server busy. Maximum {MAX_CLIENTS} clients supported.'
+                }))
+                await websocket.close()
+                return
+
+            asr_index = available_asr.pop(0)
+            logger.info(f"Assigned ASR #{asr_index} to client {websocket.remote_address} ({len(available_asr)} remaining)")
+
+        try:
+            # 풀에서 ASR 가져오기
+            pool_asr, pool_online = asr_pool[asr_index]
+
+            # 새로운 Online Processor 생성 (기존 것 재사용하면 상태 꼬일 수 있음)
+            _, client_online = factory(args)
+
+            # VAC 설정 적용
+            if args.vac:
+                from whisper_streaming.vac_online_processor import VACOnlineASRProcessor
+                client_online = VACOnlineASRProcessor(args.min_chunk_size, client_online)
+
+            await websocket_server(websocket, client_online, min_chunk)
+        finally:
+            # 연결 종료 시 ASR 반환
+            async with asr_lock:
+                available_asr.append(asr_index)
+                logger.info(f"Released ASR #{asr_index}, {len(available_asr)} now available")
 
     async def main():
         logger.info(f'Starting WebSocket server on ws://{args.host}:{args.port}')

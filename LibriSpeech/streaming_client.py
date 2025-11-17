@@ -255,8 +255,8 @@ Examples:
     parser.add_argument(
         '--server',
         type=str,
-        default='ws://localhost:8765',
-        help='WebSocket server URL (default: ws://localhost:8765)'
+        default='wss://edra-raspiest-eagerly.ngrok-free.dev/ws',
+        help='WebSocket server URL (default: wss://edra-raspiest-eagerly.ngrok-free.dev/ws)'
     )
 
     parser.add_argument(
