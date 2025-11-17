@@ -146,12 +146,15 @@ class WebSocketHandler:
             logger.debug("No text in this segment")
 
     def convert_to_numpy(self, audio_data):
-        """Convert Float32 binary data to numpy array"""
+        """Convert Int16 binary data to numpy array"""
         try:
-            # Client sends Float32 array directly (no conversion needed)
-            audio_float = np.frombuffer(audio_data, dtype=np.float32)
+            # Client sends Int16 PCM data
+            audio_int16 = np.frombuffer(audio_data, dtype=np.int16)
 
-            logger.debug(f"Received Float32 audio: {len(audio_float)} samples")
+            # Convert to float32 for Whisper (range: -32768 ~ 32767 -> -1.0 ~ 1.0)
+            audio_float = audio_int16.astype(np.float32) / 32768.0
+
+            logger.debug(f"Received Int16 audio: {len(audio_int16)} samples -> {len(audio_float)} float32 samples")
             return audio_float
 
         except Exception as e:
