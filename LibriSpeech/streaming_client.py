@@ -15,6 +15,22 @@ import soundfile as sf
 import numpy as np
 import json
 
+try:
+    from jiwer import wer, Compose, ToLowerCase, RemovePunctuation, RemoveMultipleSpaces, Strip
+    HAS_JIWER = True
+    # Create transformation pipeline for normalization
+    JIWER_TRANSFORM = Compose([
+        ToLowerCase(),           # Convert to lowercase
+        RemovePunctuation(),     # Remove all punctuation
+        RemoveMultipleSpaces(),  # Remove multiple spaces
+        Strip()                  # Strip leading/trailing whitespace
+    ])
+except ImportError:
+    HAS_JIWER = False
+    JIWER_TRANSFORM = None
+    print("Warning: jiwer not installed. WER calculation will be skipped.")
+    print("Install with: pip install jiwer")
+
 
 class LibriSpeechStreamingClient:
     def __init__(self, server_url, dataset_path, interval_ms=500, chunk_size=8000):
@@ -32,12 +48,11 @@ class LibriSpeechStreamingClient:
         self.interval_ms = interval_ms
         self.chunk_size = chunk_size
         self.sample_rate = 16000
-        self.current_utt_id = None
-        self.current_gt = None
-        self.chunk_send_time = {}  # Track when each chunk was sent
-        self.gt_map = {}  # Map utterance_id -> ground truth
-        self.output_lines = []  # Collect output lines for saving to file
-        self.current_file_idx = None  # Track current file index for output
+        self.gt_list = []  # List of all ground truth transcripts
+        self.output_lines = []  # Collect Whisper output lines for saving to file
+        self.start_time = None  # Track when streaming starts
+        self.end_time = None  # Track when streaming ends
+        self.total_audio_duration = 0.0  # Total duration of all audio files
 
     def get_chapter_files(self, subset, speaker_id, chapter_id):
         """
@@ -89,7 +104,6 @@ class LibriSpeechStreamingClient:
         """Receive and display server responses"""
         try:
             while True:
-                recv_time = time.time()
                 response = await websocket.recv()
                 try:
                     data = json.loads(response)
@@ -97,63 +111,15 @@ class LibriSpeechStreamingClient:
 
                     if msg_type == 'hello':
                         print(f"✓ Server: {data.get('message', '')}\n")
-                    elif msg_type == 'partial_cumulative':
-                        # Partial transcription result
-                        original = data.get('original', '')
-                        ko = data.get('ko', '')
-                        en = data.get('en', '')
-                        print(f"  [Partial] {original}", end='')
-                        if ko:
-                            print(f" (KO: {ko})", end='')
-                        if en:
-                            print(f" (EN: {en})", end='')
-                        print('\r', end='')
                     elif msg_type == 'final':
                         # Final transcription result
-                        utt_id = data.get('utt_id', None)
                         original = data.get('original', '')
-                        language = data.get('language', 'unknown')
-                        ko = data.get('ko', '')
-                        en = data.get('en', '')
 
-                        # Calculate latency
-                        latency_str = ""
-                        if utt_id and utt_id in self.chunk_send_time:
-                            send_time = self.chunk_send_time[utt_id]
-                            latency = (recv_time - send_time) * 1000
-                            latency_str = f" [Latency: {latency:.0f}ms]"
+                        # Print Whisper result to console
+                        print(f"Whisper: {original}")
 
-                        # Print GT on first result for this utterance
-                        if utt_id and utt_id in self.gt_map and utt_id not in getattr(self, 'printed_gts', set()):
-                            gt_text = self.gt_map[utt_id]
-                            print(f"\n📝 GT: {gt_text}")
-
-                            # Add to output file
-                            if self.current_file_idx is not None:
-                                self.output_lines.append(f"[File {self.current_file_idx}] {utt_id}")
-                                self.output_lines.append(f"GT: {gt_text}")
-
-                            if not hasattr(self, 'printed_gts'):
-                                self.printed_gts = set()
-                            self.printed_gts.add(utt_id)
-
-                        # Print Whisper result
-                        whisper_line = f"Whisper ({language.upper()}): {original}{latency_str}"
-                        print(f"🎙️  {whisper_line}")
-                        self.output_lines.append(whisper_line)
-
-                        # Print translation
-                        if language == 'ko' and en:
-                            trans_line = f"Translation (EN): {en}"
-                            print(f"🇺🇸 {trans_line}")
-                            self.output_lines.append(trans_line)
-                        elif language == 'en' and ko:
-                            trans_line = f"Translation (KO): {ko}"
-                            print(f"🇰🇷 {trans_line}")
-                            self.output_lines.append(trans_line)
-
-                        print(f"-" * 70)
-                        self.output_lines.append("")  # Empty line between results
+                        # Store just the text (without "Whisper: " prefix)
+                        self.output_lines.append(original)
                 except json.JSONDecodeError:
                     pass
         except websockets.exceptions.ConnectionClosed:
@@ -192,18 +158,18 @@ class LibriSpeechStreamingClient:
                 if show_recognition:
                     receive_task = asyncio.create_task(self.receive_responses(websocket))
 
+                # Start timing
+                self.start_time = time.time()
+
                 total_chunks_sent = 0
 
                 for file_idx, flac_file in enumerate(flac_files, 1):
                     # Extract utterance ID from filename
                     utt_id = Path(flac_file).stem
 
-                    # Set current file index for output
-                    self.current_file_idx = file_idx
-
-                    # Store GT in map for response handler
+                    # Store GT for file output
                     if utt_id in transcripts:
-                        self.gt_map[utt_id] = transcripts[utt_id]
+                        self.gt_list.append(transcripts[utt_id])
 
                     # Read audio file
                     audio, sr = sf.read(flac_file)
@@ -222,16 +188,22 @@ class LibriSpeechStreamingClient:
                             audio
                         )
 
-                    # Show file info (GT will be shown when receiving response)
+                    # Track total audio duration
+                    audio_duration = len(audio) / self.sample_rate
+                    self.total_audio_duration += audio_duration
+
+                    # Show file info
                     if show_transcript:
                         print(f"\n[File {file_idx}/{len(flac_files)}] {utt_id}")
-                        print(f"⏱️  Audio Length: {len(audio)/self.sample_rate:.2f}s")
+                        print(f"⏱️  Audio Length: {audio_duration:.2f}s")
 
-                    # Send start message with utterance ID
-                    await websocket.send(json.dumps({
-                        'type': 'start',
-                        'utt_id': utt_id
-                    }))
+                    # Show GT on screen
+                    if utt_id in transcripts:
+                        gt_text = transcripts[utt_id]
+                        if show_transcript:
+                            print(f"📝 GT: {gt_text}")
+
+                    # No start message needed - just stream continuously
 
                     # Stream audio in chunks
                     num_chunks = (len(audio) + self.chunk_size - 1) // self.chunk_size
@@ -244,10 +216,6 @@ class LibriSpeechStreamingClient:
                         # Convert to bytes (Float32 format)
                         chunk_float32 = chunk.astype(np.float32)
                         chunk_bytes = chunk_float32.tobytes()
-
-                        # Record send time for the first chunk
-                        if chunk_idx == 0:
-                            self.chunk_send_time[utt_id] = time.time()
 
                         # Send chunk
                         await websocket.send(chunk_bytes)
@@ -267,9 +235,18 @@ class LibriSpeechStreamingClient:
                     # Small gap between files
                     await asyncio.sleep(self.interval_ms / 1000.0)
 
-                # Wait longer for all server responses to complete
-                print(f"\nWaiting for final server responses...")
-                await asyncio.sleep(10.0)
+                # Send finish signal to flush remaining audio
+                print(f"\nSending finish signal to server...")
+                await websocket.send(json.dumps({'type': 'finish'}))
+
+                # Wait for final server responses to complete
+                print(f"Waiting for final server responses...")
+                await asyncio.sleep(5.0)
+
+                # End timing
+                self.end_time = time.time()
+                total_processing_time = self.end_time - self.start_time
+                delay = total_processing_time - self.total_audio_duration
 
                 # Cancel receive task
                 if receive_task:
@@ -283,15 +260,58 @@ class LibriSpeechStreamingClient:
                 print(f"Stream completed!")
                 print(f"Total files: {len(flac_files)}")
                 print(f"Total chunks sent: {total_chunks_sent}")
-                print(f"Total duration: {total_chunks_sent * self.chunk_size / self.sample_rate:.2f}s")
+                print(f"Total audio duration: {self.total_audio_duration:.2f}s")
+                print(f"Total processing time: {total_processing_time:.2f}s")
+                print(f"Total delay: {delay:.2f}s")
                 print(f"{'='*70}\n")
 
                 # Save results to file
-                if self.output_lines:
-                    output_filename = f"streaming_results_{subset}_{speaker_id}_{chapter_id}.txt"
+                print(f"\nSaving results...")
+
+                if self.gt_list or self.output_lines:
+                    # Create output directory if it doesn't exist
+                    output_dir = Path("output")
+                    output_dir.mkdir(exist_ok=True)
+
+                    output_filename = output_dir / f"streaming_results_{subset}_{speaker_id}_{chapter_id}.txt"
                     with open(output_filename, 'w', encoding='utf-8') as f:
-                        f.write('\n'.join(self.output_lines))
-                    print(f"Results saved to: {output_filename}\n")
+                        # Write all GT transcripts first
+                        if self.gt_list:
+                            gt_combined = " ".join(self.gt_list)
+                            f.write(f"GT: {gt_combined}\n\n")
+                            print(f"  GT: {len(self.gt_list)} utterances combined")
+
+                        # Write all Whisper results
+                        if self.output_lines:
+                            whisper_combined = " ".join(self.output_lines)
+                            f.write(f"Whisper: {whisper_combined}\n\n")
+                            print(f"  Whisper: {len(self.output_lines)} segments combined")
+
+                        # Calculate and write WER if possible
+                        if HAS_JIWER and self.gt_list and self.output_lines:
+                            gt_combined = " ".join(self.gt_list)
+                            whisper_combined = " ".join(self.output_lines)
+
+                            # Normalize both strings (lowercase, no punctuation)
+                            gt_normalized = JIWER_TRANSFORM(gt_combined)
+                            whisper_normalized = JIWER_TRANSFORM(whisper_combined)
+
+                            # Calculate WER with normalized text
+                            wer_score = wer(gt_normalized, whisper_normalized)
+
+                            f.write(f"\n{'='*70}\n")
+                            f.write(f"WER (normalized): {wer_score:.2%}\n")
+                            print(f"  WER (normalized): {wer_score:.2%}")
+
+                        # Write timing information
+                        f.write(f"\n{'='*70}\n")
+                        f.write(f"Total audio duration: {self.total_audio_duration:.2f}s\n")
+                        f.write(f"Total processing time: {total_processing_time:.2f}s\n")
+                        f.write(f"Total delay: {delay:.2f}s\n")
+
+                    print(f"\nResults saved to: {output_filename}\n")
+                else:
+                    print(f"No results to save!")
 
         except websockets.exceptions.WebSocketException as e:
             print(f"WebSocket error: {e}")

@@ -18,7 +18,7 @@ python streaming_client.py --subset test-clean --speaker 1089 --chapter 134686
 
 ### 옵션 설명
 
-- `--server`: WebSocket 서버 URL (기본값: `ws://localhost:8765`)
+- `--server`: WebSocket 서버 URL (기본값: `wss://edra-raspiest-eagerly.ngrok-free.dev/ws`)
 - `--dataset`: LibriSpeech 데이터셋 경로 (기본값: 현재 디렉토리)
 - `--subset`: 데이터셋 서브셋 (필수)
   - `test-clean`, `test-other`
