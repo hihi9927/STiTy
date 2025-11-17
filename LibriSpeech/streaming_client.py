@@ -275,10 +275,13 @@ class LibriSpeechStreamingClient:
 
                     output_filename = output_dir / f"streaming_results_{subset}_{speaker_id}_{chapter_id}.txt"
                     with open(output_filename, 'w', encoding='utf-8') as f:
+                        # Write header with chapter info
+                        f.write(f"[{speaker_id}-{chapter_id}]\n")
+
                         # Write all GT transcripts first
                         if self.gt_list:
                             gt_combined = " ".join(self.gt_list)
-                            f.write(f"GT: {gt_combined}\n\n")
+                            f.write(f"GT: {gt_combined}\n")
                             print(f"  GT: {len(self.gt_list)} utterances combined")
 
                         # Write all Whisper results
@@ -299,12 +302,10 @@ class LibriSpeechStreamingClient:
                             # Calculate WER with normalized text
                             wer_score = wer(gt_normalized, whisper_normalized)
 
-                            f.write(f"\n{'='*70}\n")
                             f.write(f"WER (normalized): {wer_score:.2%}\n")
                             print(f"  WER (normalized): {wer_score:.2%}")
 
                         # Write timing information
-                        f.write(f"\n{'='*70}\n")
                         f.write(f"Total audio duration: {self.total_audio_duration:.2f}s\n")
                         f.write(f"Total processing time: {total_processing_time:.2f}s\n")
                         f.write(f"Total delay: {delay:.2f}s\n")
@@ -328,6 +329,9 @@ def main():
 Examples:
   # Stream a specific chapter with 500ms intervals
   python streaming_client.py --subset test-clean --speaker 1089 --chapter 134686
+
+  # Stream all chapters in test-clean
+  python streaming_client.py --subset test-clean --all
 
   # Stream with 250ms intervals (faster)
   python streaming_client.py --subset test-clean --speaker 1089 --chapter 134686 --interval 250
@@ -363,15 +367,19 @@ Examples:
     parser.add_argument(
         '--speaker',
         type=int,
-        required=True,
         help='Speaker ID (e.g., 1089, 121, 237)'
     )
 
     parser.add_argument(
         '--chapter',
         type=int,
-        required=True,
         help='Chapter ID (e.g., 134686, 134691)'
+    )
+
+    parser.add_argument(
+        '--all',
+        action='store_true',
+        help='Process all chapters in the subset'
     )
 
     parser.add_argument(
@@ -402,6 +410,10 @@ Examples:
 
     args = parser.parse_args()
 
+    # Validate arguments
+    if not args.all and (args.speaker is None or args.chapter is None):
+        parser.error("Either --all or both --speaker and --chapter must be specified")
+
     # Create client
     client = LibriSpeechStreamingClient(
         server_url=args.server,
@@ -411,13 +423,51 @@ Examples:
     )
 
     # Run streaming
-    asyncio.run(client.stream_audio(
-        subset=args.subset,
-        speaker_id=args.speaker,
-        chapter_id=args.chapter,
-        show_transcript=not args.no_transcript,
-        show_recognition=not args.no_recognition
-    ))
+    if args.all:
+        # Process all chapters in the subset
+        subset_path = Path(args.dataset) / args.subset
+        if not subset_path.exists():
+            print(f"Error: Subset path not found: {subset_path}")
+            return
+
+        # Get all speaker directories
+        speaker_dirs = sorted([d for d in subset_path.iterdir() if d.is_dir()])
+
+        print(f"\n{'='*70}")
+        print(f"Processing all chapters in {args.subset}")
+        print(f"Found {len(speaker_dirs)} speakers")
+        print(f"{'='*70}\n")
+
+        for speaker_dir in speaker_dirs:
+            speaker_id = int(speaker_dir.name)
+
+            # Get all chapter directories for this speaker
+            chapter_dirs = sorted([d for d in speaker_dir.iterdir() if d.is_dir()])
+
+            for chapter_dir in chapter_dirs:
+                chapter_id = int(chapter_dir.name)
+
+                try:
+                    asyncio.run(client.stream_audio(
+                        subset=args.subset,
+                        speaker_id=speaker_id,
+                        chapter_id=chapter_id,
+                        show_transcript=not args.no_transcript,
+                        show_recognition=not args.no_recognition
+                    ))
+                except Exception as e:
+                    print(f"\nError processing {speaker_id}-{chapter_id}: {e}")
+                    print("Continuing to next chapter...\n")
+                    continue
+    else:
+        # Process single chapter
+        asyncio.run(client.stream_audio(
+            subset=args.subset,
+            speaker_id=args.speaker,
+            chapter_id=args.chapter,
+            show_transcript=not args.no_transcript,
+            show_recognition=not args.no_recognition
+        ))
 
 
 if __name__ == '__main__':

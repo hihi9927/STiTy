@@ -31,7 +31,7 @@ def librispeech_whisper_args(parser):
                             'until this number of frames from the end of audio. In frames: one frame is 0.02 seconds for large-v3 model. ')
 
     group = parser.add_argument_group('Truncation of the last decoded word (from Simul-Whisper)')
-    group.add_argument('--cif_ckpt_path', type=str, default=r'c:\Users\VRSTUDIO3\Desktop\STiTy_fk\SimulStreaming\small_cif.pt',
+    group.add_argument('--cif_ckpt_path', type=str, default=r'c:\Users\VRSTUDIO3\Desktop\STiTy_fk\SimulStreaming\large-v2_cif.pt',
                         help='The file path to the Simul-Whisper\'s CIF model checkpoint that detects whether there is' \
                         'end of word at the end of the chunk. If not, the last decoded space-separated word is truncated ' \
                         'because it is often wrong -- transcribing a word in the middle.' \
