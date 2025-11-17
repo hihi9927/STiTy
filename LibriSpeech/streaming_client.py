@@ -213,9 +213,11 @@ class LibriSpeechStreamingClient:
                         end_idx = min(start_idx + self.chunk_size, len(audio))
                         chunk = audio[start_idx:end_idx]
 
-                        # Convert to bytes (Float32 format)
-                        chunk_float32 = chunk.astype(np.float32)
-                        chunk_bytes = chunk_float32.tobytes()
+                        # Convert to bytes (Int16 format)
+                        # soundfile returns float32 in range [-1.0, 1.0]
+                        # Convert to int16 range [-32768, 32767]
+                        chunk_int16 = (chunk * 32767).astype(np.int16)
+                        chunk_bytes = chunk_int16.tobytes()
 
                         # Send chunk
                         await websocket.send(chunk_bytes)
