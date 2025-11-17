@@ -237,8 +237,9 @@ class LibriSpeechStreamingClient:
                     # Small gap between files
                     await asyncio.sleep(self.interval_ms / 1000.0)
 
-                # Wait a bit for final results
-                await asyncio.sleep(2.0)
+                # Wait longer for all server responses to complete
+                print(f"\nWaiting for final server responses...")
+                await asyncio.sleep(10.0)
 
                 # Cancel receive task
                 if receive_task:
