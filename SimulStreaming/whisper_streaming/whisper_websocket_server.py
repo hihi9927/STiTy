@@ -33,42 +33,42 @@ class WebSocketHandler:
         except Exception as e:
             logger.error(f"Error sending message: {e}")
 
-    def detect_and_translate(self, text, detected_lang, lang_probs=None):
-        """Detect language and translate English ↔ Korean"""
+    def detect_and_translate(self, text, detected_lang, lang_probs):
+        """Use Whisper's language detection, fallback to probability for other languages"""
         try:
-            # 언어 감지 (Whisper에서 제공하는 언어 또는 자동 감지)
+            # Whisper에서 감지한 언어
             lang = detected_lang.lower() if detected_lang else 'en'
-
-            # 한국어 또는 영어가 아닌 경우, 확률 기반 또는 텍스트 분석으로 판단
-            if lang not in ['ko', 'korean', 'en', 'english']:
-                # lang_probs가 제공된 경우, EN과 KO 확률 비교
-                if lang_probs:
-                    en_prob = lang_probs.get('en', 0.0)
-                    ko_prob = lang_probs.get('ko', 0.0)
-
-                    logger.info(f"Language probabilities - EN: {en_prob:.4f}, KO: {ko_prob:.4f}")
-
-                    # EN과 KO 중 더 높은 확률의 언어 선택
-                    if ko_prob > en_prob:
-                        lang = 'ko'
-                        logger.info(f"Selected Korean based on probability ({ko_prob:.4f} > {en_prob:.4f})")
-                    else:
-                        lang = 'en'
-                        logger.info(f"Selected English based on probability ({en_prob:.4f} >= {ko_prob:.4f})")
-                else:
-                    # 확률 정보가 없으면 텍스트 분석
-                    korean_chars = sum(1 for c in text if '\uac00' <= c <= '\ud7a3')
-                    if korean_chars > len(text) * 0.3:
-                        lang = 'ko'
-                    else:
-                        lang = 'en'
-                    logger.info(f"Unknown language '{detected_lang}', auto-detected as: {lang} (text-based)")
 
             # 한국어 정규화
             if lang in ['korean']:
                 lang = 'ko'
             elif lang in ['english']:
                 lang = 'en'
+
+            # 영어나 한국어가 아닌 다른 언어로 감지된 경우
+            if lang not in ['ko', 'en']:
+                logger.info(f"Whisper detected '{lang}' which is neither EN nor KO")
+
+                # 영어와 한국어 확률 비교
+                if lang_probs:
+                    en_prob = lang_probs.get('en', 0.0)
+                    ko_prob = lang_probs.get('ko', 0.0)
+
+                    logger.info(f"Language probabilities - EN: {en_prob:.4f}, KO: {ko_prob:.4f}")
+
+                    # 더 높은 확률로 강제 선택
+                    if ko_prob > en_prob:
+                        lang = 'ko'
+                        logger.info(f"Forced to Korean based on probability ({ko_prob:.4f} > {en_prob:.4f})")
+                    else:
+                        lang = 'en'
+                        logger.info(f"Forced to English based on probability ({en_prob:.4f} >= {ko_prob:.4f})")
+                else:
+                    # 확률 정보가 없으면 기본값은 영어
+                    logger.warning("No language probabilities available, defaulting to English")
+                    lang = 'en'
+            else:
+                logger.info(f"Whisper detected: {lang}")
 
             ko_text = None
             en_text = None
@@ -88,7 +88,8 @@ class WebSocketHandler:
 
         except Exception as e:
             logger.error(f"Translation error: {e}")
-            return lang, None, None
+            # 에러 발생 시 기본값으로 영어 선택
+            return 'en', None, None
 
     async def send_result(self, iteration_output):
         """Send transcription result to client"""
@@ -104,12 +105,12 @@ class WebSocketHandler:
             message = f"{start_ms} {end_ms} {text}"
             print(message, flush=True, file=sys.stderr)
 
-            # 언어 감지 및 번역 (항상 수행)
+            # Whisper 언어 감지 사용, 영어/한국어 외에는 확률로 판단
             detected_lang = iteration_output.get('language', 'en')
             lang_probs = iteration_output.get('language_probs', None)
 
-            logger.info(f"Language detection - detected_lang: {detected_lang}, lang_probs: {lang_probs}")
             logger.info(f"Text to translate: {text}")
+            logger.info(f"Whisper detected language: {detected_lang}")
 
             lang, ko_text, en_text = self.detect_and_translate(text, detected_lang, lang_probs)
 
@@ -144,28 +145,24 @@ class WebSocketHandler:
         else:
             logger.debug("No text in this segment")
 
-    def convert_pcm_to_float(self, pcm_data):
-        """Convert RAW PCM Int16 data to float32 numpy array"""
+    def convert_to_numpy(self, audio_data):
+        """Convert Float32 binary data to numpy array"""
         try:
-            # PCM data is already in 16kHz Int16 format from client
-            # Convert bytes to Int16 array
-            audio_int16 = np.frombuffer(pcm_data, dtype=np.int16)
+            # Client sends Float32 array directly (no conversion needed)
+            audio_float = np.frombuffer(audio_data, dtype=np.float32)
 
-            # Convert Int16 to Float32 (-1.0 to 1.0)
-            audio_float = audio_int16.astype(np.float32) / 32768.0
-
-            logger.debug(f"Converted PCM: {len(audio_float)} samples")
+            logger.debug(f"Received Float32 audio: {len(audio_float)} samples")
             return audio_float
 
         except Exception as e:
-            logger.error(f"Error converting PCM: {e}")
+            logger.error(f"Error converting audio: {e}")
             return None
 
     async def process_audio_chunk(self, audio_data):
         """Process incoming audio data"""
         try:
-            # Convert RAW PCM to float32
-            audio = self.convert_pcm_to_float(audio_data)
+            # Convert binary Float32 to numpy array
+            audio = self.convert_to_numpy(audio_data)
 
             if audio is None or len(audio) == 0:
                 logger.warning("Failed to convert audio or empty audio")

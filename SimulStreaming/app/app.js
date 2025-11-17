@@ -380,22 +380,15 @@ async function startRecording() {
         downsampled[i] = inputData[srcIndex];
       }
 
-      // Float32 (-1.0 to 1.0) -> Int16 (-32768 to 32767)
-      const pcmData = new Int16Array(downsampled.length);
-      for (let i = 0; i < downsampled.length; i++) {
-        const s = Math.max(-1, Math.min(1, downsampled[i]));
-        pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-      }
-
-      // 버퍼에 추가
-      state.audioBuffer.push(pcmData);
+      // Float32 그대로 버퍼에 추가 (Int16 변환 제거)
+      state.audioBuffer.push(downsampled);
 
       // 버퍼에 충분한 샘플이 모이면 전송
       const totalSamples = state.audioBuffer.reduce((sum, arr) => sum + arr.length, 0);
       if (totalSamples >= targetSamplesPerChunk) {
-        // 모든 버퍼를 하나로 합치기
+        // 모든 버퍼를 하나로 합치기 (Float32 유지)
         const combinedLength = totalSamples;
-        const combinedBuffer = new Int16Array(combinedLength);
+        const combinedBuffer = new Float32Array(combinedLength);
         let offset = 0;
 
         for (const buf of state.audioBuffer) {
@@ -403,9 +396,9 @@ async function startRecording() {
           offset += buf.length;
         }
 
-        // 전송
+        // Float32 전송
         state.ws.send(combinedBuffer.buffer);
-        console.log('📤 오디오 청크 전송:', combinedBuffer.length, 'samples (~' + (combinedBuffer.length / 16000).toFixed(2) + 's)');
+        console.log('📤 오디오 청크 전송 (Float32):', combinedBuffer.length, 'samples (~' + (combinedBuffer.length / 16000).toFixed(2) + 's)');
 
         // 버퍼 초기화
         state.audioBuffer = [];
