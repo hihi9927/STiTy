@@ -226,7 +226,14 @@ class WebSocketHandler:
                         data = json.loads(message)
                         msg_type = data.get('type', '')
 
-                        if msg_type == 'stop':
+                        if msg_type == 'finish':
+                            logger.info("Received finish command - flushing buffer")
+                            # Flush remaining audio buffer
+                            result = self.online_asr_proc.finish()
+                            if result:
+                                await self.send_result(result)
+                            logger.info("Buffer flushed")
+                        elif msg_type == 'stop':
                             logger.info("Received stop command")
                             self.running = False
                             break
