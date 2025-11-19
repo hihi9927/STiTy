@@ -77,6 +77,49 @@ class WebSocketHandler:
             self.last_vad_status = vad_status
             logger.debug(f"[VAD] Status: {vad_status}, nonvoice_count: {self.nonvoice_count}")
 
+            # Check if we should flush translation buffer due to VAD silence
+            # Trigger at nonvoice_count == 1 (approximately 0.5 seconds of silence)
+            if self.nonvoice_count == 1 and len(self.translation_buffer) > 0:
+                logger.info(f"[VAD] Silence detected. Flushing translation buffer ({len(self.translation_buffer)} segments)")
+
+                # Combine all buffered text
+                full_text = ' '.join(seg['text'] for seg in self.translation_buffer)
+                first_start = self.translation_buffer[0]['start']
+                last_end = self.translation_buffer[-1]['end']
+
+                # Translate the complete sentence
+                lang, ko_text, en_text = self.detect_and_translate(full_text, self.detected_language, None)
+
+                logger.info(f"[send_result] Translation result - lang: {lang}, ko: {ko_text}, en: {en_text}")
+
+                # polished는 번역 결과 (없으면 원문)
+                polished = full_text
+                if lang == 'ko' and en_text:
+                    polished = en_text
+                elif lang == 'en' and ko_text:
+                    polished = ko_text
+
+                # Send the complete sentence with translation
+                result_msg = {
+                    'type': 'final',
+                    'start': first_start,
+                    'end': last_end,
+                    'original': full_text,
+                    'polished': polished,
+                    'language': lang
+                }
+
+                if ko_text:
+                    result_msg['ko'] = ko_text
+                if en_text:
+                    result_msg['en'] = en_text
+
+                await self.send_message(result_msg)
+
+                # Clear the buffer
+                self.translation_buffer = []
+                logger.info("[VAD] Translation buffer cleared after silence detection")
+
         if iteration_output and iteration_output.get('text'):
             start_ms = int(iteration_output['start'] * 1000)
             end_ms = int(iteration_output['end'] * 1000)
@@ -111,14 +154,9 @@ class WebSocketHandler:
             # This indicates the sentence is complete and ready for translation
             sentence_complete = any(text.endswith(p) for p in ['.', '!', '?', '。', '!', '?'])
 
-            # Also check if VAD detected silence (nonvoice for 2+ consecutive detections)
-            # This indicates the speaker has paused, so we should translate
-            vad_silence_detected = self.nonvoice_count >= 2
-
-            if sentence_complete or vad_silence_detected:
-                # Sentence is complete or silence detected - translate the entire buffer
-                reason = "punctuation" if sentence_complete else "VAD silence"
-                logger.info(f"[send_result] Translation triggered by {reason}. Translating {len(self.translation_buffer)} segments")
+            if sentence_complete:
+                # Sentence is complete - translate the entire buffer
+                logger.info(f"[send_result] Translation triggered by punctuation. Translating {len(self.translation_buffer)} segments")
 
                 # Combine all buffered text
                 full_text = ' '.join(seg['text'] for seg in self.translation_buffer)
