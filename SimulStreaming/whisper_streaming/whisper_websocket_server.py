@@ -34,61 +34,58 @@ class WebSocketHandler:
             logger.error(f"Error sending message: {e}")
 
     def detect_and_translate(self, text, detected_lang, lang_probs):
-        """Use Whisper's language detection, fallback to probability for other languages"""
+        """Only EN and KO are supported. Other languages are mapped to EN/KO based on probabilities"""
         try:
             # Whisper에서 감지한 언어
             lang = detected_lang.lower() if detected_lang else 'en'
 
-            # 한국어 정규화
+            # 한국어/영어 정규화
             if lang in ['korean']:
                 lang = 'ko'
             elif lang in ['english']:
                 lang = 'en'
 
-            # 영어나 한국어가 아닌 다른 언어로 감지된 경우
+            # 영어나 한국어가 아닌 다른 언어로 감지된 경우 → EN/KO 확률로만 매핑
             if lang not in ['ko', 'en']:
-                logger.info(f"Whisper detected '{lang}' which is neither EN nor KO")
+                logger.warning(f"[detect_and_translate] Detected unsupported language '{lang}'. System only supports EN/KO. Selecting based on EN/KO probabilities.")
 
-                # 영어와 한국어 확률 비교
-                if lang_probs:
+                # 영어와 한국어 확률로만 비교
+                if lang_probs and isinstance(lang_probs, dict):
                     en_prob = lang_probs.get('en', 0.0)
                     ko_prob = lang_probs.get('ko', 0.0)
 
-                    logger.info(f"Language probabilities - EN: {en_prob:.4f}, KO: {ko_prob:.4f}")
+                    logger.info(f"[detect_and_translate] EN probability: {en_prob:.6f}, KO probability: {ko_prob:.6f}")
 
-                    # 더 높은 확률로 강제 선택
+                    # EN과 KO 중 더 높은 확률 선택
                     if ko_prob > en_prob:
                         lang = 'ko'
-                        logger.info(f"Forced to Korean based on probability ({ko_prob:.4f} > {en_prob:.4f})")
+                        logger.info(f"[detect_and_translate] Selected Korean ({ko_prob:.6f}) > English ({en_prob:.6f})")
                     else:
                         lang = 'en'
-                        logger.info(f"Forced to English based on probability ({en_prob:.4f} >= {ko_prob:.4f})")
+                        logger.info(f"[detect_and_translate] Selected English ({en_prob:.6f}) >= Korean ({ko_prob:.6f})")
                 else:
                     # 확률 정보가 없으면 기본값은 영어
-                    logger.warning("No language probabilities available, defaulting to English")
+                    logger.warning(f"[detect_and_translate] No language probabilities available, defaulting to English")
                     lang = 'en'
             else:
-                logger.info(f"Whisper detected: {lang}")
+                logger.info(f"[detect_and_translate] Detected language: {lang}")
 
             ko_text = None
             en_text = None
 
-            # 한국어 → 영어
+            # 한국어 → 영어 번역
             if lang == 'ko':
                 en_text = GoogleTranslator(source='ko', target='en').translate(text)
-                ko_text = None  # 원문이 이미 한국어
                 logger.debug(f"Translated KO→EN: {text} → {en_text}")
-            # 영어 → 한국어
+            # 영어 → 한국어 번역 (또는 다른 언어를 영어로 맞춘 경우)
             else:
                 ko_text = GoogleTranslator(source='en', target='ko').translate(text)
-                en_text = None  # 원문이 이미 영어
                 logger.debug(f"Translated EN→KO: {text} → {ko_text}")
 
             return lang, ko_text, en_text
 
         except Exception as e:
             logger.error(f"Translation error: {e}")
-            # 에러 발생 시 기본값으로 영어 선택
             return 'en', None, None
 
     async def send_result(self, iteration_output):
@@ -109,12 +106,14 @@ class WebSocketHandler:
             detected_lang = iteration_output.get('language', 'en')
             lang_probs = iteration_output.get('language_probs', None)
 
-            logger.info(f"Text to translate: {text}")
-            logger.info(f"Whisper detected language: {detected_lang}")
+            logger.debug(f"[send_result] iteration_output keys: {iteration_output.keys() if iteration_output else 'None'}")
+            logger.info(f"[send_result] Text to translate: {text}")
+            logger.info(f"[send_result] Whisper detected language: {detected_lang} (type: {type(detected_lang)})")
+            logger.debug(f"[send_result] language_probs available: {lang_probs is not None}")
 
             lang, ko_text, en_text = self.detect_and_translate(text, detected_lang, lang_probs)
 
-            logger.info(f"Translation result - lang: {lang}, ko_text: {ko_text}, en_text: {en_text}")
+            logger.info(f"[send_result] Final translation result - lang: {lang}, ko_text: {ko_text}, en_text: {en_text}")
 
             # polished는 번역 결과 (없으면 원문)
             polished = text

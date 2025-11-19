@@ -107,6 +107,30 @@ class SimulWhisperASR(ASRBase):
         logger.info(f"Language: {language}")
         self.model = PaddedAlignAttWhisper(cfg)
 
+        # Log GPU usage information
+        self._log_gpu_info()
+
+    def _log_gpu_info(self):
+        """Log GPU availability and usage information."""
+        cuda_available = torch.cuda.is_available()
+        logger.info(f"CUDA available: {cuda_available}")
+
+        if cuda_available:
+            cuda_device_count = torch.cuda.device_count()
+            logger.info(f"GPU device count: {cuda_device_count}")
+
+            # Check which device the model is on
+            model_device = next(self.model.model.parameters()).device
+            logger.info(f"Model device: {model_device}")
+
+            if model_device.type == 'cuda':
+                device_name = torch.cuda.get_device_name(model_device.index)
+                logger.info(f"Using GPU: {device_name}")
+            else:
+                logger.warning("Model is on CPU despite CUDA availability")
+        else:
+            logger.warning("CUDA not available - running on CPU")
+
     def transcribe(self, audio, init_prompt=""):
         logger.info("SimulWhisperASR's transcribe() should not be used. It's here only temporarily." \
         "Instead, use SimulWhisperOnline.process_iter().")
