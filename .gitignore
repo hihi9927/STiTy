@@ -4,6 +4,7 @@ weights/
 .venv/
 .DS_Store
 *.pt
+!*cif.pt
 *.pth
 *.safetensors
 
