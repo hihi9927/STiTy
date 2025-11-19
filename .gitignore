@@ -16,7 +16,6 @@ node_modules/
 *.pak
 *.dat
 *.bin
-*.json
 locales/
 resources/
 LICENSE.electron.txt
