@@ -371,8 +371,26 @@ class PaddedAlignAttWhisper:
             logger.debug(f"Language tokens: {language_tokens}, probs: {language_probs}")
             top_lan, p = max(language_probs[0].items(), key=lambda x: x[1])
             logger.info(f"Detected language: {top_lan} with p={p:.4f}")
-            #self.tokenizer.language = top_lan
-            #self.tokenizer.__post_init__()
+
+            # Only EN and KO are supported. Map other languages to EN/KO based on probabilities
+            if top_lan not in ['en', 'ko']:
+                logger.warning(f"Detected unsupported language '{top_lan}'. System only supports EN/KO. Selecting based on EN/KO probabilities.")
+
+                # Compare only EN and KO probabilities
+                lang_probs_dict = language_probs[0] if isinstance(language_probs, list) else language_probs
+                en_prob = lang_probs_dict.get('en', 0.0)
+                ko_prob = lang_probs_dict.get('ko', 0.0)
+
+                logger.info(f"EN probability: {en_prob:.6f}, KO probability: {ko_prob:.6f}")
+
+                # Select the higher probability between EN and KO
+                if ko_prob > en_prob:
+                    top_lan = 'ko'
+                    logger.info(f"Selected Korean ({ko_prob:.6f}) > English ({en_prob:.6f})")
+                else:
+                    top_lan = 'en'
+                    logger.info(f"Selected English ({en_prob:.6f}) >= Korean ({ko_prob:.6f})")
+
             self.create_tokenizer(top_lan)
             self.detected_language = top_lan
             self.detected_language_probs = language_probs[0] if isinstance(language_probs, list) else language_probs
