@@ -99,10 +99,14 @@ class VACOnlineASRProcessor(OnlineProcessorInterface):
         elif self.current_online_chunk_buffer_size > self.SAMPLING_RATE*self.online_chunk_size:
             self.current_online_chunk_buffer_size = 0
             ret = self.online.process_iter()
+            # Include VAD status in return
+            if ret:
+                ret['vad_status'] = self.status
             return ret
         else:
             logger.info(f"no online update, only VAD. {self.status}")
-            return {}
+            # Return VAD status even when no transcription update
+            return {'vad_status': self.status}
 
     def finish(self):
         ret = self.online.finish()
