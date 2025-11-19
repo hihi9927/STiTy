@@ -34,41 +34,12 @@ class WebSocketHandler:
             logger.error(f"Error sending message: {e}")
 
     def detect_and_translate(self, text, detected_lang, lang_probs):
-        """Only EN and KO are supported. Other languages are mapped to EN/KO based on probabilities"""
+        """Translate based on language already detected and mapped to EN/KO by Whisper"""
         try:
-            # Whisper에서 감지한 언어
+            # Language is already set to 'en' or 'ko' by simul_whisper.py
             lang = detected_lang.lower() if detected_lang else 'en'
 
-            # 한국어/영어 정규화
-            if lang in ['korean']:
-                lang = 'ko'
-            elif lang in ['english']:
-                lang = 'en'
-
-            # 영어나 한국어가 아닌 다른 언어로 감지된 경우 → EN/KO 확률로만 매핑
-            if lang not in ['ko', 'en']:
-                logger.warning(f"[detect_and_translate] Detected unsupported language '{lang}'. System only supports EN/KO. Selecting based on EN/KO probabilities.")
-
-                # 영어와 한국어 확률로만 비교
-                if lang_probs and isinstance(lang_probs, dict):
-                    en_prob = lang_probs.get('en', 0.0)
-                    ko_prob = lang_probs.get('ko', 0.0)
-
-                    logger.info(f"[detect_and_translate] EN probability: {en_prob:.6f}, KO probability: {ko_prob:.6f}")
-
-                    # EN과 KO 중 더 높은 확률 선택
-                    if ko_prob > en_prob:
-                        lang = 'ko'
-                        logger.info(f"[detect_and_translate] Selected Korean ({ko_prob:.6f}) > English ({en_prob:.6f})")
-                    else:
-                        lang = 'en'
-                        logger.info(f"[detect_and_translate] Selected English ({en_prob:.6f}) >= Korean ({ko_prob:.6f})")
-                else:
-                    # 확률 정보가 없으면 기본값은 영어
-                    logger.warning(f"[detect_and_translate] No language probabilities available, defaulting to English")
-                    lang = 'en'
-            else:
-                logger.info(f"[detect_and_translate] Detected language: {lang}")
+            logger.info(f"[detect_and_translate] Language from Whisper: {lang}")
 
             ko_text = None
             en_text = None
@@ -77,7 +48,7 @@ class WebSocketHandler:
             if lang == 'ko':
                 en_text = GoogleTranslator(source='ko', target='en').translate(text)
                 logger.debug(f"Translated KO→EN: {text} → {en_text}")
-            # 영어 → 한국어 번역 (또는 다른 언어를 영어로 맞춘 경우)
+            # 영어 → 한국어 번역
             else:
                 ko_text = GoogleTranslator(source='en', target='ko').translate(text)
                 logger.debug(f"Translated EN→KO: {text} → {ko_text}")
