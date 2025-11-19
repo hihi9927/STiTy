@@ -195,11 +195,16 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         for sw,st in zip(split_words,split_tokens):
             b = None
             for stt in st:
+                if len(tokens) == 0 or len(frames) == 0:
+                    logger.warning(f"Token/frame mismatch: tokens={len(tokens)}, frames={len(frames)}")
+                    break
                 t,f = tokens.pop(0), frames.pop(0)
                 if t != stt:
                     raise ValueError(f"Token mismatch: {t} != {stt} at frame {f}.")
                 if b is None:
                     b = f
+            if b is None:
+                continue
             e = f
             out = {
                 'start': b * 0.02 + self.audio_bufer_offset,
@@ -246,10 +251,14 @@ class SimulWhisperOnline(OnlineProcessorInterface):
         text = self.model.tokenizer.decode(tokens)
         if len(text) == 0:
             return {}
-        
+
         # word-level timestamps
         ts_words = self.timestamped_text(tokens, generation_progress)
-        
+
+        # Handle empty ts_words (e.g., only special tokens)
+        if len(ts_words) == 0:
+            return {}
+
         self.beg = min(word['start'] for word in ts_words)  # it should be this
         self.beg = max(self.beg, self.last_ts + 0.001)  # but let's create the timestamps non-decreasing -- at least last beg + 1
         if self.is_last:
@@ -275,6 +284,11 @@ class SimulWhisperOnline(OnlineProcessorInterface):
                 result['language'] = generation_progress['language']
             if 'language_probs' in generation_progress:
                 result['language_probs'] = generation_progress['language_probs']
+
+            # Check if rule-based breaking occurred - if so, refresh segment to clear audio buffer
+            if generation_progress.get('rule_based_break', False):
+                logger.info("[Rule-based break] Refreshing segment to clear audio buffer")
+                self.model.refresh_segment(complete=True)
 
         return result
 

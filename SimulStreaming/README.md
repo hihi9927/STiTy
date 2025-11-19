@@ -1,5 +1,7 @@
 # SimulStreaming
 
+python simulstreaming_websocket_server.py --model ./small.pt --cif_ckpt_path ./cif_models/small_cif.pt --vac --min-chunk-size 3 --frame_threshold 25 --lan auto --max_context_tokens 0 --audio_max_len 15
+
 SimulStreaming implements Whisper model for translation and transcription in
 simultaneous mode (which is known as *streaming* in the ASR community).
 SimulStreaming uses the state-of-the-art simultaneous policy AlignAtt, which

@@ -29,8 +29,7 @@ class WebSocketHandler:
         # Translation buffer: accumulate text segments until sentence break
         self.translation_buffer = []  # List of text segments
         self.detected_language = None  # Store detected language
-        self.last_vad_status = None  # Track VAD status for silence detection
-        self.nonvoice_count = 0  # Count consecutive nonvoice detections
+        self.nonvoice_count = 0  # Count consecutive nonvoice detections for VAD-based flush
 
     async def send_message(self, message_dict):
         """Send JSON message to client"""
@@ -39,7 +38,52 @@ class WebSocketHandler:
         except Exception as e:
             logger.error(f"Error sending message: {e}")
 
-    def detect_and_translate(self, text, detected_lang, lang_probs):
+    async def flush_translation_buffer(self, trigger_reason="unknown"):
+        """Flush translation buffer and send translation"""
+        if not self.translation_buffer:
+            return
+
+        logger.info(f"[Translation] Flushing buffer ({len(self.translation_buffer)} segments) - reason: {trigger_reason}")
+
+        # Combine all buffered text
+        full_text = ' '.join(seg['text'] for seg in self.translation_buffer)
+        first_start = self.translation_buffer[0]['start']
+        last_end = self.translation_buffer[-1]['end']
+
+        # Translate the complete text
+        lang, ko_text, en_text = await self.detect_and_translate(full_text, self.detected_language, None)
+
+        logger.info(f"[Translation] Result - lang: {lang}, ko: {ko_text}, en: {en_text}")
+
+        # polished는 번역 결과 (없으면 원문)
+        polished = full_text
+        if lang == 'ko' and en_text:
+            polished = en_text
+        elif lang == 'en' and ko_text:
+            polished = ko_text
+
+        # Send the complete sentence with translation
+        result_msg = {
+            'type': 'final',
+            'start': first_start,
+            'end': last_end,
+            'original': full_text,
+            'polished': polished,
+            'language': lang
+        }
+
+        if ko_text:
+            result_msg['ko'] = ko_text
+        if en_text:
+            result_msg['en'] = en_text
+
+        await self.send_message(result_msg)
+
+        # Clear the buffer
+        self.translation_buffer = []
+        logger.info(f"[Translation] Buffer cleared after {trigger_reason}")
+
+    async def detect_and_translate(self, text, detected_lang, lang_probs):
         """Translate based on language already detected and mapped to EN/KO by Whisper"""
         try:
             # Language is already set to 'en' or 'ko' by simul_whisper.py
@@ -50,13 +94,22 @@ class WebSocketHandler:
             ko_text = None
             en_text = None
 
+            # Run translation in executor to avoid blocking the event loop
+            loop = asyncio.get_event_loop()
+
             # 한국어 → 영어 번역
             if lang == 'ko':
-                en_text = GoogleTranslator(source='ko', target='en').translate(text)
+                en_text = await loop.run_in_executor(
+                    None,
+                    lambda: GoogleTranslator(source='ko', target='en').translate(text)
+                )
                 logger.debug(f"Translated KO→EN: {text} → {en_text}")
             # 영어 → 한국어 번역
             else:
-                ko_text = GoogleTranslator(source='en', target='ko').translate(text)
+                ko_text = await loop.run_in_executor(
+                    None,
+                    lambda: GoogleTranslator(source='en', target='ko').translate(text)
+                )
                 logger.debug(f"Translated EN→KO: {text} → {ko_text}")
 
             return lang, ko_text, en_text
@@ -67,58 +120,18 @@ class WebSocketHandler:
 
     async def send_result(self, iteration_output):
         """Send transcription result to client"""
-        # Track VAD status
+        # Track VAD status for translation flush
         vad_status = iteration_output.get('vad_status') if iteration_output else None
         if vad_status:
             if vad_status == 'nonvoice':
                 self.nonvoice_count += 1
             else:
                 self.nonvoice_count = 0
-            self.last_vad_status = vad_status
-            logger.debug(f"[VAD] Status: {vad_status}, nonvoice_count: {self.nonvoice_count}")
 
-            # Check if we should flush translation buffer due to VAD silence
-            # Trigger at nonvoice_count == 1 (approximately 0.5 seconds of silence)
+            # Flush translation buffer after 0.5s silence (nonvoice_count == 1)
+            # VAD detects silence every 500ms, so count==1 means approximately 0.5s
             if self.nonvoice_count == 1 and len(self.translation_buffer) > 0:
-                logger.info(f"[VAD] Silence detected. Flushing translation buffer ({len(self.translation_buffer)} segments)")
-
-                # Combine all buffered text
-                full_text = ' '.join(seg['text'] for seg in self.translation_buffer)
-                first_start = self.translation_buffer[0]['start']
-                last_end = self.translation_buffer[-1]['end']
-
-                # Translate the complete sentence
-                lang, ko_text, en_text = self.detect_and_translate(full_text, self.detected_language, None)
-
-                logger.info(f"[send_result] Translation result - lang: {lang}, ko: {ko_text}, en: {en_text}")
-
-                # polished는 번역 결과 (없으면 원문)
-                polished = full_text
-                if lang == 'ko' and en_text:
-                    polished = en_text
-                elif lang == 'en' and ko_text:
-                    polished = ko_text
-
-                # Send the complete sentence with translation
-                result_msg = {
-                    'type': 'final',
-                    'start': first_start,
-                    'end': last_end,
-                    'original': full_text,
-                    'polished': polished,
-                    'language': lang
-                }
-
-                if ko_text:
-                    result_msg['ko'] = ko_text
-                if en_text:
-                    result_msg['en'] = en_text
-
-                await self.send_message(result_msg)
-
-                # Clear the buffer
-                self.translation_buffer = []
-                logger.info("[VAD] Translation buffer cleared after silence detection")
+                await self.flush_translation_buffer("VAD silence (0.5s)")
 
         if iteration_output and iteration_output.get('text'):
             start_ms = int(iteration_output['start'] * 1000)
@@ -134,7 +147,6 @@ class WebSocketHandler:
 
             # Get detected language
             detected_lang = iteration_output.get('language', 'en')
-            lang_probs = iteration_output.get('language_probs', None)
 
             # Store language if not set
             if self.detected_language is None:
@@ -156,46 +168,7 @@ class WebSocketHandler:
 
             if sentence_complete:
                 # Sentence is complete - translate the entire buffer
-                logger.info(f"[send_result] Translation triggered by punctuation. Translating {len(self.translation_buffer)} segments")
-
-                # Combine all buffered text
-                full_text = ' '.join(seg['text'] for seg in self.translation_buffer)
-                first_start = self.translation_buffer[0]['start']
-                last_end = self.translation_buffer[-1]['end']
-
-                # Translate the complete sentence
-                lang, ko_text, en_text = self.detect_and_translate(full_text, self.detected_language, lang_probs)
-
-                logger.info(f"[send_result] Translation result - lang: {lang}, ko: {ko_text}, en: {en_text}")
-
-                # polished는 번역 결과 (없으면 원문)
-                polished = full_text
-                if lang == 'ko' and en_text:
-                    polished = en_text
-                elif lang == 'en' and ko_text:
-                    polished = ko_text
-
-                # Send the complete sentence with translation
-                result_msg = {
-                    'type': 'final',
-                    'start': first_start,
-                    'end': last_end,
-                    'original': full_text,
-                    'polished': polished,
-                    'language': lang
-                }
-
-                if ko_text:
-                    result_msg['ko'] = ko_text
-                if en_text:
-                    result_msg['en'] = en_text
-
-                await self.send_message(result_msg)
-
-                # Clear the buffer and reset VAD counter
-                self.translation_buffer = []
-                self.nonvoice_count = 0
-                logger.info("[send_result] Translation buffer cleared, VAD counter reset")
+                await self.flush_translation_buffer("punctuation")
             else:
                 # Sentence not complete yet - just send partial result without translation
                 logger.info(f"[send_result] Partial segment (buffer: {len(self.translation_buffer)} segments)")
@@ -299,38 +272,7 @@ class WebSocketHandler:
                                 await self.send_result(result)
 
                             # Flush remaining translation buffer
-                            if self.translation_buffer:
-                                logger.info(f"Flushing remaining translation buffer ({len(self.translation_buffer)} segments)")
-                                full_text = ' '.join(seg['text'] for seg in self.translation_buffer)
-                                first_start = self.translation_buffer[0]['start']
-                                last_end = self.translation_buffer[-1]['end']
-
-                                # Translate the remaining text
-                                lang, ko_text, en_text = self.detect_and_translate(full_text, self.detected_language, None)
-
-                                polished = full_text
-                                if lang == 'ko' and en_text:
-                                    polished = en_text
-                                elif lang == 'en' and ko_text:
-                                    polished = ko_text
-
-                                result_msg = {
-                                    'type': 'final',
-                                    'start': first_start,
-                                    'end': last_end,
-                                    'original': full_text,
-                                    'polished': polished,
-                                    'language': lang
-                                }
-
-                                if ko_text:
-                                    result_msg['ko'] = ko_text
-                                if en_text:
-                                    result_msg['en'] = en_text
-
-                                await self.send_message(result_msg)
-                                self.translation_buffer = []
-
+                            await self.flush_translation_buffer("finish command")
                             logger.info("Buffer flushed")
                         elif msg_type == 'stop':
                             logger.info("Received stop command")

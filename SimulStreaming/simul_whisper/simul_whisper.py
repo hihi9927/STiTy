@@ -248,11 +248,12 @@ class PaddedAlignAttWhisper:
 
         # Decode tokens to text
         text = self.tokenizer.decode(tokens_list)
+        logger.debug(f"[Rule-based] Checking text: '{text}'")
 
         # Check for sentence-ending punctuation
         for punct in SENTENCE_END_PUNCTUATION:
             if punct in text:
-                logger.info(f"[Rule-based break] Found sentence-ending punctuation: '{punct}'")
+                logger.info(f"[Rule-based break] Found sentence-ending punctuation: '{punct}' in text: '{text}'")
                 return True, 0  # Keep all tokens including punctuation
 
         # Check for sentence-break punctuation (commas, semicolons)
@@ -492,6 +493,9 @@ class PaddedAlignAttWhisper:
 
             # to be filled in the loop
             "progress": generation_progress,
+
+            # Rule-based breaking flag
+            "rule_based_break": False,
         }
         while not completed and current_tokens.shape[1] < self.max_text_len: # bos is 3 tokens
             generation_progress_loop = []
@@ -548,6 +552,7 @@ class PaddedAlignAttWhisper:
                         # Break after punctuation - keep all tokens
                         logger.info(f"[Rule-based break] Breaking after punctuation")
                     completed = True
+                    generation["rule_based_break"] = True
                     break
 
             # Hallucination detection
@@ -589,6 +594,13 @@ class PaddedAlignAttWhisper:
                 completed = True
                 break
 
+            # Early exit if completed (e.g., by rule-based breaking or <|endoftext|>)
+            # This must happen BEFORE attention processing to preserve punctuation
+            if completed:
+                # Strip the <|endoftext|> token if present
+                if current_tokens.shape[1] > 0 and current_tokens[0, -1].item() == 50257:
+                    current_tokens = current_tokens[:, :-1]
+                break
 
             # if self.decoder_type == "beam":
             #     logger.debug(f"Finished sequences: {self.token_decoder.finished_sequences}")
@@ -662,9 +674,19 @@ class PaddedAlignAttWhisper:
 
             if content_mel_len - most_attended_frame <= (4 if is_last else self.cfg.frame_threshold):
                 logger.debug(f"attention reaches the end: {most_attended_frame}/{content_mel_len}")
-                # stripping the last token, the one that is attended too close to the end
-                current_tokens = current_tokens[:, :-1]
-                break
+                # Check if the last token contains sentence-ending punctuation
+                last_token_text = self.tokenizer.decode([current_tokens[0, -1].item()])
+                has_sentence_end = any(p in last_token_text for p in SENTENCE_END_PUNCTUATION)
+
+                if has_sentence_end:
+                    # Keep the last token if it contains sentence-ending punctuation
+                    logger.info(f"[Attention] Keeping last token '{last_token_text}' (contains punctuation)")
+                    # Don't strip, just break
+                    break
+                else:
+                    # stripping the last token, the one that is attended too close to the end
+                    current_tokens = current_tokens[:, :-1]
+                    break
         
             # debug print
             for i in range(self.cfg.beam_size):
@@ -705,7 +727,7 @@ class PaddedAlignAttWhisper:
 
         # let's now operate only with the top beam hypothesis
         tokens_to_split = current_tokens[0, token_len_before_decoding:]
-        if fire_detected or is_last:
+        if fire_detected or is_last or completed:
             new_hypothesis = tokens_to_split.flatten().tolist()
         else:
             # going to truncate the tokens after the last space
