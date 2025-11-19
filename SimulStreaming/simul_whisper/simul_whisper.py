@@ -26,12 +26,21 @@ logger = logging.getLogger(__name__)
 import sys
 import wave
 
-# New features added to the original version of Simul-Whisper: 
+# New features added to the original version of Simul-Whisper:
 # - large-v3 model support
 # - translation support
 # - beam search
 # - prompt -- static vs. non-static
 # - context
+
+# Rule-based sentence breaking: punctuation and conjunctions
+SENTENCE_END_PUNCTUATION = {'.', '!', '?', '。', '!', '?'}  # Period, exclamation, question marks (EN/KO)
+SENTENCE_BREAK_PUNCTUATION = {',', ';', ':', '、', ',', ';', ':'}  # Comma, semicolon, colon (EN/KO)
+# Conjunctions that signal a good breaking point (break BEFORE the conjunction)
+CONJUNCTIONS_EN = {'but', 'so', 'yet', 'nor', 'however', 'therefore', 'moreover', 'furthermore', 'meanwhile', 'otherwise', 'nevertheless'}
+CONJUNCTIONS_KO = {'그리고', '하지만', '그러나', '그래서', '따라서', '그러므로', '또한', '게다가', '그런데', '한편', '그렇지만', '그럼에도'}
+ALL_CONJUNCTIONS = CONJUNCTIONS_EN | CONJUNCTIONS_KO
+
 class PaddedAlignAttWhisper:
     def __init__(self, cfg: AlignAttConfig) -> None:
         self.logdir_i = 0
@@ -226,6 +235,49 @@ class PaddedAlignAttWhisper:
         if self.always_fire: return True
         if self.never_fire: return False
         return fire_at_boundary(chunked_encoder_feature, self.CIFLinear)
+
+    def should_break_at_punctuation(self, tokens_list):
+        """
+        Check if we should break the sentence based on punctuation or conjunctions.
+        Returns (should_break, break_position)
+        - should_break: True if we should stop decoding
+        - break_position: number of tokens to keep (from the end, negative index)
+        """
+        if len(tokens_list) == 0:
+            return False, 0
+
+        # Decode tokens to text
+        text = self.tokenizer.decode(tokens_list)
+
+        # Check for sentence-ending punctuation
+        for punct in SENTENCE_END_PUNCTUATION:
+            if punct in text:
+                logger.info(f"[Rule-based break] Found sentence-ending punctuation: '{punct}'")
+                return True, 0  # Keep all tokens including punctuation
+
+        # Check for sentence-break punctuation (commas, semicolons)
+        for punct in SENTENCE_BREAK_PUNCTUATION:
+            if text.endswith(punct) or text.endswith(punct + ' '):
+                logger.info(f"[Rule-based break] Found sentence-break punctuation: '{punct}'")
+                return True, 0  # Keep all tokens including punctuation
+
+        # Check for conjunctions - break BEFORE the conjunction
+        words = text.strip().split()
+        if len(words) > 0:
+            # Check if the last word (or last few words) is a conjunction
+            last_word = words[-1].strip('.,;:!?').lower()
+            if last_word in ALL_CONJUNCTIONS:
+                logger.info(f"[Rule-based break] Found conjunction at end: '{last_word}' - breaking BEFORE it")
+                # We need to find how many tokens to exclude (the conjunction tokens)
+                # Decode all tokens except the last few to find the split point
+                for i in range(1, min(5, len(tokens_list)) + 1):  # Check last 5 tokens max
+                    text_without_last = self.tokenizer.decode(tokens_list[:-i])
+                    if last_word not in text_without_last.lower():
+                        # Found the split point - exclude last i tokens
+                        logger.info(f"[Rule-based break] Excluding last {i} tokens (conjunction)")
+                        return True, -i
+
+        return False, 0
 
 
     def _current_tokens(self):
@@ -481,6 +533,22 @@ class PaddedAlignAttWhisper:
 
             logger.debug(f"Decoding completed: {completed}, sum_logprobs: {sum_logprobs.tolist()}, tokens: ")
             self.debug_print_tokens(current_tokens)
+
+            # Rule-based sentence breaking (punctuation and conjunctions)
+            # Check tokens generated so far (excluding initial prompt tokens)
+            if not is_last:  # Only apply rule-based breaking during streaming, not at the end
+                new_tokens_so_far = current_tokens[0, token_len_before_decoding:].tolist()
+                should_break, break_offset = self.should_break_at_punctuation(new_tokens_so_far)
+                if should_break:
+                    if break_offset < 0:
+                        # Break before conjunction - trim the conjunction tokens
+                        logger.info(f"[Rule-based break] Breaking before conjunction, trimming {-break_offset} tokens")
+                        current_tokens = current_tokens[:, :break_offset]
+                    else:
+                        # Break after punctuation - keep all tokens
+                        logger.info(f"[Rule-based break] Breaking after punctuation")
+                    completed = True
+                    break
 
             # Hallucination detection
             current_token = current_tokens[0, -1].item()
