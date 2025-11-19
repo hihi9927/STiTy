@@ -7,6 +7,9 @@ weights/
 *.pth
 *.safetensors
 
+# Node.js dependencies
+node_modules/
+
 # Electron build output
 *.exe
 *.dll
