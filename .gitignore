@@ -6,3 +6,15 @@ weights/
 *.pt
 *.pth
 *.safetensors
+
+# Electron build output
+*.exe
+*.dll
+*.pak
+*.dat
+*.bin
+*.json
+locales/
+resources/
+LICENSE.electron.txt
+LICENSES.chromium.html

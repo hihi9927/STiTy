@@ -331,10 +331,11 @@ async function connectWebSocket() {
           console.log('👋', data.message);
         } else if (t === 'ready') {
           console.log('✅ 서버 준비 완료', data);
-        } else if (t === 'partial_cumulative') {
-          const original = data.polished || data.original || '';
+        } else if (t === 'partial_cumulative' || t === 'partial') {
+          // partial: 문장이 아직 완성되지 않음 (번역 없음)
+          const original = data.original || '';
           if (original) {
-            console.log('🟡 부분 결과:', original);
+            console.log('🟡 부분 결과 (번역 없음):', original);
             showResult(original, '');
           }
         } else if (t === 'final') {
