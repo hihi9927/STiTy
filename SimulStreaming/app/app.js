@@ -530,6 +530,13 @@ async function startRecording() {
 function stopRecording() {
   console.log('⏹️ 녹음 중지 요청');
 
+  // Send finish command to server to flush remaining buffers
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    const finishMsg = { type: 'finish' };
+    state.ws.send(JSON.stringify(finishMsg));
+    console.log('📤 Finish 메시지 전송');
+  }
+
   if (state.audioWorkletNode) {
     state.audioWorkletNode.disconnect();
     state.audioWorkletNode = null;
