@@ -285,10 +285,12 @@ class SimulWhisperOnline(OnlineProcessorInterface):
             if 'language_probs' in generation_progress:
                 result['language_probs'] = generation_progress['language_probs']
 
-            # Check if rule-based breaking occurred - if so, refresh segment to clear audio buffer
-            if generation_progress.get('rule_based_break', False):
-                logger.info("[Rule-based break] Refreshing segment to clear audio buffer")
-                self.model.refresh_segment(complete=True)
+            # DISABLED: Don't refresh segment immediately after rule-based break
+            # This causes audio loss when consecutive sentences arrive quickly during translation
+            # The segment will be refreshed only on finish() or when truly needed
+            # if generation_progress.get('rule_based_break', False):
+            #     logger.info("[Rule-based break] Refreshing segment to clear audio buffer")
+            #     self.model.refresh_segment(complete=True)
 
         return result
 
