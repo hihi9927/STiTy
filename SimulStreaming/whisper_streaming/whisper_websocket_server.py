@@ -9,10 +9,26 @@ import numpy as np
 import asyncio
 import json
 from deep_translator import GoogleTranslator
+import spacy
 
 logger = logging.getLogger(__name__)
 
 SAMPLING_RATE = 16000
+
+# Load spaCy models for sentence boundary detection
+try:
+    nlp_ko = spacy.load("ko_core_news_sm")
+    logger.info("Loaded Korean spaCy model for sentence boundary detection")
+except OSError:
+    logger.warning("Korean spaCy model not found. Install with: python -m spacy download ko_core_news_sm")
+    nlp_ko = None
+
+try:
+    nlp_en = spacy.load("en_core_web_sm")
+    logger.info("Loaded English spaCy model for sentence boundary detection")
+except OSError:
+    logger.warning("English spaCy model not found. Install with: python -m spacy download en_core_web_sm")
+    nlp_en = None
 
 
 class WebSocketHandler:
@@ -82,6 +98,33 @@ class WebSocketHandler:
         # Clear the buffer
         self.translation_buffer = []
         logger.info(f"[Translation] Buffer cleared after {trigger_reason}")
+
+    def check_sentence_boundary(self, text, language):
+        """Check if text contains a complete sentence using spaCy"""
+        try:
+            # Select appropriate spaCy model
+            if language == 'ko' and nlp_ko is not None:
+                nlp = nlp_ko
+            elif language == 'en' and nlp_en is not None:
+                nlp = nlp_en
+            else:
+                # Fallback: no spaCy model available
+                return False
+
+            # Process text with spaCy
+            doc = nlp(text)
+            sentences = list(doc.sents)
+
+            # If spaCy detects at least one complete sentence, return True
+            if len(sentences) >= 1:
+                logger.debug(f"[spaCy] Detected {len(sentences)} sentence(s) in: {text}")
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"[spaCy] Error in sentence boundary detection: {e}")
+            return False
 
     async def detect_and_translate(self, text, detected_lang, lang_probs):
         """Translate based on language already detected and mapped to EN/KO by Whisper"""
@@ -170,16 +213,22 @@ class WebSocketHandler:
                 # Sentence is complete - translate the entire buffer
                 await self.flush_translation_buffer("punctuation")
             else:
-                # Sentence not complete yet - just send partial result without translation
-                logger.info(f"[send_result] Partial segment (buffer: {len(self.translation_buffer)} segments)")
-                result_msg = {
-                    'type': 'partial',
-                    'start': start_ms,
-                    'end': end_ms,
-                    'original': text,
-                    'language': detected_lang
-                }
-                await self.send_message(result_msg)
+                # Check if spaCy detects a sentence boundary (even without punctuation)
+                full_text = ' '.join(seg['text'] for seg in self.translation_buffer)
+                if self.check_sentence_boundary(full_text, detected_lang):
+                    logger.info(f"[spaCy] Sentence boundary detected without punctuation")
+                    await self.flush_translation_buffer("sentence_boundary")
+                else:
+                    # Sentence not complete yet - just send partial result without translation
+                    logger.info(f"[send_result] Partial segment (buffer: {len(self.translation_buffer)} segments)")
+                    result_msg = {
+                        'type': 'partial',
+                        'start': start_ms,
+                        'end': end_ms,
+                        'original': text,
+                        'language': detected_lang
+                    }
+                    await self.send_message(result_msg)
         else:
             logger.debug("No text in this segment")
 
