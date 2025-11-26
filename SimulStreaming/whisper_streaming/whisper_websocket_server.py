@@ -46,6 +46,8 @@ class WebSocketHandler:
         self.translation_buffer = []  # List of text segments
         self.detected_language = None  # Store detected language
         self.nonvoice_count = 0  # Count consecutive nonvoice detections for VAD-based flush
+        self.display_mode = 'both'  # Display mode: 'translateOnly', 'transcriptOnly', 'both'
+        self.language_hint = 'auto'  # Language hint: 'auto', 'ko', 'en'
 
     async def send_message(self, message_dict):
         """Send JSON message to client"""
@@ -71,22 +73,51 @@ class WebSocketHandler:
 
         logger.info(f"[Translation] Result - lang: {lang}, ko: {ko_text}, en: {en_text}")
 
-        # polished는 번역 결과 (없으면 원문)
-        polished = full_text
-        if lang == 'ko' and en_text:
-            polished = en_text
-        elif lang == 'en' and ko_text:
-            polished = ko_text
+        # polished는 번역 결과 (translateOnly 모드에서는 번역 실패 시 빈 문자열)
+        if self.display_mode == 'translateOnly':
+            # translateOnly mode: only show translation, empty if translation fails
+            if lang == 'ko':
+                # Check if translation succeeded (not None and not same as original)
+                if en_text and en_text.strip() != full_text.strip():
+                    polished = en_text
+                else:
+                    polished = ''
+                    logger.warning(f"[Translation] EN translation failed or same as original")
+            else:
+                # Check if translation succeeded (not None and not same as original)
+                if ko_text and ko_text.strip() != full_text.strip():
+                    polished = ko_text
+                else:
+                    polished = ''
+                    logger.warning(f"[Translation] KO translation failed or same as original")
+        else:
+            # Normal mode: show translation or fallback to original
+            polished = full_text
+            if lang == 'ko' and en_text:
+                polished = en_text
+            elif lang == 'en' and ko_text:
+                polished = ko_text
 
         # Send the complete sentence with translation
-        result_msg = {
-            'type': 'final',
-            'start': first_start,
-            'end': last_end,
-            'original': full_text,
-            'polished': polished,
-            'language': lang
-        }
+        # In translateOnly mode, don't send original text (hide source language)
+        if self.display_mode == 'translateOnly':
+            result_msg = {
+                'type': 'final',
+                'start': first_start,
+                'end': last_end,
+                'original': '',  # Don't show original in translateOnly mode
+                'polished': polished,
+                'language': lang
+            }
+        else:
+            result_msg = {
+                'type': 'final',
+                'start': first_start,
+                'end': last_end,
+                'original': full_text,
+                'polished': polished,
+                'language': lang
+            }
 
         if ko_text:
             result_msg['ko'] = ko_text
@@ -188,12 +219,32 @@ class WebSocketHandler:
             message = f"{start_ms} {end_ms} {text}"
             print(message, flush=True, file=sys.stderr)
 
-            # Get detected language
-            detected_lang = iteration_output.get('language', 'en')
+            # Get detected language (override with hint if not auto)
+            whisper_detected_lang = iteration_output.get('language', 'en')
 
-            # Store language if not set
-            if self.detected_language is None:
-                self.detected_language = detected_lang
+            # Apply language hint override
+            if self.language_hint == 'auto':
+                detected_lang = whisper_detected_lang
+            else:
+                detected_lang = self.language_hint
+                if whisper_detected_lang != detected_lang:
+                    logger.info(f"[Language Hint] Overriding Whisper detection '{whisper_detected_lang}' with hint '{detected_lang}'")
+
+            # Check if language changed - if so, clear buffer (don't flush) and reset ASR
+            if self.detected_language is not None and self.detected_language != detected_lang:
+                logger.info(f"[send_result] Language changed from {self.detected_language} to {detected_lang} - clearing buffer and resetting ASR")
+
+                # Clear buffer without translating (previous buffer likely has misdetected language)
+                logger.info(f"[send_result] Discarding {len(self.translation_buffer)} segments due to language change")
+                self.translation_buffer = []
+
+                # Reset ASR processor to clear KV cache and all internal states
+                # This prevents tensor size mismatch errors when language changes
+                self.online_asr_proc.init()
+                logger.info("[send_result] ASR processor reset complete")
+
+            # Update language
+            self.detected_language = detected_lang
 
             logger.info(f"[send_result] Text segment: {text}")
             logger.info(f"[send_result] Detected language: {detected_lang}")
@@ -219,16 +270,19 @@ class WebSocketHandler:
                     logger.info(f"[spaCy] Sentence boundary detected without punctuation")
                     await self.flush_translation_buffer("sentence_boundary")
                 else:
-                    # Sentence not complete yet - just send partial result without translation
-                    logger.info(f"[send_result] Partial segment (buffer: {len(self.translation_buffer)} segments)")
-                    result_msg = {
-                        'type': 'partial',
-                        'start': start_ms,
-                        'end': end_ms,
-                        'original': text,
-                        'language': detected_lang
-                    }
-                    await self.send_message(result_msg)
+                    # Sentence not complete yet - send partial result only if not in translateOnly mode
+                    if self.display_mode != 'translateOnly':
+                        logger.info(f"[send_result] Partial segment (buffer: {len(self.translation_buffer)} segments)")
+                        result_msg = {
+                            'type': 'partial',
+                            'start': start_ms,
+                            'end': end_ms,
+                            'original': text,
+                            'language': detected_lang
+                        }
+                        await self.send_message(result_msg)
+                    else:
+                        logger.info(f"[send_result] Partial segment skipped (translateOnly mode, buffer: {len(self.translation_buffer)} segments)")
         else:
             logger.debug("No text in this segment")
 
@@ -313,7 +367,17 @@ class WebSocketHandler:
                         data = json.loads(message)
                         msg_type = data.get('type', '')
 
-                        if msg_type == 'finish':
+                        if msg_type == 'start':
+                            logger.info("Received start command")
+                            # Get display mode from client
+                            if 'displayMode' in data:
+                                self.display_mode = data['displayMode']
+                                logger.info(f"Display mode set to: {self.display_mode}")
+                            # Get language hint from client
+                            if 'languageHint' in data:
+                                self.language_hint = data['languageHint']
+                                logger.info(f"Language hint set to: {self.language_hint}")
+                        elif msg_type == 'finish':
                             logger.info("Received finish command - flushing buffer")
                             # Flush remaining audio buffer
                             result = self.online_asr_proc.finish()

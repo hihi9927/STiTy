@@ -230,6 +230,9 @@ class PaddedAlignAttWhisper:
             self.segments = []
         self.log_segments += 1
 
+        # Clear KV cache to prevent tensor size mismatch on language change
+        self._clean_cache()
+
 
     def fire_at_boundary(self, chunked_encoder_feature: torch.Tensor):
         if self.always_fire: return True
