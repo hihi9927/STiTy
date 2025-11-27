@@ -1,0 +1,23 @@
+__pycache__
+audio_data/
+weights/
+.venv/
+.DS_Store
+*.pt
+!*cif.pt
+*.pth
+*.safetensors
+
+# Node.js dependencies
+node_modules/
+
+# Electron build output
+*.exe
+*.dll
+*.pak
+*.dat
+*.bin
+locales/
+resources/
+LICENSE.electron.txt
+LICENSES.chromium.html
