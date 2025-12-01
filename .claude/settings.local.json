@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git rm:*)",
+      "Bash(git commit:*)",
+      "Bash(git push)",
+      "Bash(git checkout:*)",
+      "Bash(pip install:*)",
+      "Bash(dir:*)",
+      "Bash(choco install:*)",
+      "Bash(ipconfig:*)",
+      "Bash(findstr:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
