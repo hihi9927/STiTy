@@ -332,11 +332,21 @@ async function connectWebSocket() {
         } else if (t === 'ready') {
           console.log('✅ 서버 준비 완료', data);
         } else if (t === 'partial_cumulative' || t === 'partial') {
-          // partial: 문장이 아직 완성되지 않음 (번역 없음)
+          // partial: 문장이 아직 완성되지 않음 (번역 포함)
           const original = data.original || '';
+          const polished = data.polished || '';
           if (original) {
-            console.log('🟡 부분 결과 (번역 없음):', original);
-            showResult(original, '');
+            console.log('🟡 부분 결과:', {original, polished});
+
+            // displayMode에 따라 표시
+            if (state.displayMode === 'translateOnly') {
+              showResult(polished, '');
+            } else if (state.displayMode === 'transcriptOnly') {
+              showResult(original, '');
+            } else {
+              // 전사+번역: 둘 다 표시
+              showResult(original, polished);
+            }
           }
         } else if (t === 'final') {
           // 서버에서 보낸 데이터:

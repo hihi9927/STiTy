@@ -532,21 +532,40 @@ class WebSocketHandler:
                     logger.info(f"[spaCy] Sentence boundary detected without punctuation")
                     await self.flush_translation_buffer("sentence_boundary")
                 else:
-                    # Sentence not complete yet - send cumulative partial result only if not in translateOnly mode
+                    # Sentence not complete yet - send cumulative partial result with translation
                     if self.display_mode != 'translateOnly':
                         # Send cumulative text (all buffered segments combined)
                         cumulative_text = ' '.join(seg['text'] for seg in self.translation_buffer)
                         first_start = self.translation_buffer[0]['start']
 
                         logger.info(f"[send_result] Partial cumulative ({len(self.translation_buffer)} segments): {cumulative_text}")
+
+                        # Translate partial text for faster display
+                        lang, ko_text, en_text = await self.detect_and_translate(cumulative_text, detected_lang, None)
+
+                        # Determine polished text based on language
+                        polished = cumulative_text
+                        if lang == 'ko' and en_text:
+                            polished = en_text
+                        elif lang == 'en' and ko_text:
+                            polished = ko_text
+
                         result_msg = {
                             'type': 'partial',
                             'start': first_start,
                             'end': end_ms,
                             'original': cumulative_text,  # Cumulative text instead of single segment
+                            'polished': polished,  # Add translation for partial
                             'language': detected_lang
                         }
+
+                        if ko_text:
+                            result_msg['ko'] = ko_text
+                        if en_text:
+                            result_msg['en'] = en_text
+
                         await self.send_message(result_msg)
+                        logger.info(f"[send_result] Partial translation sent: {polished}")
                     else:
                         logger.info(f"[send_result] Partial segment skipped (translateOnly mode, buffer: {len(self.translation_buffer)} segments)")
         else:
