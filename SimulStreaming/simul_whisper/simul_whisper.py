@@ -87,12 +87,7 @@ class PaddedAlignAttWhisper:
                 self.kv_cache[module.cache_id] = net_output
             else:
                 x = self.kv_cache[module.cache_id]
-                # Check if dimensions match before concatenating
-                if x.shape[0] != net_output.shape[0] or x.shape[2:] != net_output.shape[2:]:
-                    logger.warning(f"KV cache size mismatch: {x.shape} vs {net_output.shape}. Reinitializing cache.")
-                    self.kv_cache[module.cache_id] = net_output
-                else:
-                    self.kv_cache[module.cache_id] = torch.cat([x, net_output], dim=1).detach()
+                self.kv_cache[module.cache_id] = torch.cat([x, net_output], dim=1).detach()
             return self.kv_cache[module.cache_id] 
 
         for i,b in enumerate(self.model.decoder.blocks):
@@ -221,10 +216,6 @@ class PaddedAlignAttWhisper:
     def refresh_segment(self, complete=False):
 
         logger.debug("Refreshing segment:")
-
-        # Clean KV cache to prevent size mismatch errors
-        self._clean_cache()
-
         self.init_tokens()
         self.last_attend_frame = -self.cfg.rewind_threshold
         self.detected_language = None
@@ -238,6 +229,9 @@ class PaddedAlignAttWhisper:
             logger.debug("removing all segments.")
             self.segments = []
         self.log_segments += 1
+
+        # Clear KV cache to prevent tensor size mismatch on language change
+        self._clean_cache()
 
 
     def fire_at_boundary(self, chunked_encoder_feature: torch.Tensor):
@@ -485,7 +479,7 @@ class PaddedAlignAttWhisper:
         generation = {
             "starting_tokens": BeamTokens(current_tokens[0,:].clone(), self.cfg.beam_size),
             "token_len_before_decoding": token_len_before_decoding,
-            #"fire_detected": fire_detected,
+            "fire_detected": fire_detected,  # CIF model boundary detection
             "frames_len": content_mel_len,
             "frames_threshold": 4 if is_last else self.cfg.frame_threshold,
 
