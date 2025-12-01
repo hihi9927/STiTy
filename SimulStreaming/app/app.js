@@ -332,43 +332,54 @@ async function connectWebSocket() {
         } else if (t === 'ready') {
           console.log('✅ 서버 준비 완료', data);
         } else if (t === 'partial_cumulative' || t === 'partial') {
-          // partial: 문장이 아직 완성되지 않음 (번역 포함)
+          // partial: 문장이 아직 완성되지 않음 (번역 안 함, 원문만 표시)
           const original = data.original || '';
-          const polished = data.polished || '';
           if (original) {
-            console.log('🟡 부분 결과:', {original, polished});
+            console.log('🟡 부분 결과 (원문만):', original);
 
-            // displayMode에 따라 표시
-            if (state.displayMode === 'translateOnly') {
-              showResult(polished, '');
-            } else if (state.displayMode === 'transcriptOnly') {
+            // displayMode에 관계없이 partial에서는 번역 없이 원문만 표시
+            if (state.displayMode !== 'translateOnly') {
+              // transcriptOnly, both 모드: 원문만 표시
               showResult(original, '');
-            } else {
-              // 전사+번역: 둘 다 표시
-              showResult(original, polished);
             }
+            // translateOnly 모드에서는 partial 무시 (final에서만 표시)
           }
         } else if (t === 'final') {
           // 서버에서 보낸 데이터:
-          // - original = Whisper가 인식한 원문 (항상)
-          // - polished = 번역 결과 (번역 실패시 원문)
+          // - original = Whisper가 인식한 원문 (항상 있음)
+          // - polished = 번역 결과
+          // - language = 인식된 언어 (ko 또는 en)
           // - ko/en = 각 언어별 텍스트
 
           const original = data.original || '';
-          const polished = data.polished || '';
+          const language = data.language || 'ko';
+          const ko = data.ko || '';
+          const en = data.en || '';
 
-          console.log('🟢 최종 결과:', {original, polished, ko: data.ko, en: data.en});
+          console.log('🟢 최종 결과:', {original, language, ko, en});
 
           // displayMode에 따라 표시
           if (state.displayMode === 'translateOnly') {
-            // 번역만: polished를 original로 표시
-            showResult(polished, '');
+            // 번역만 모드: 번역된 텍스트만 표시
+            if (language === 'ko') {
+              // 한국어 → 영어 번역
+              showResult(en || original, '');
+            } else {
+              // 영어 → 한국어 번역
+              showResult(ko || original, '');
+            }
           } else if (state.displayMode === 'transcriptOnly') {
-            // 전사만: original만 표시
+            // 전사만 모드: 원문만 표시
             showResult(original, '');
           } else {
-            // 전사+번역: original과 polished 모두 표시
-            showResult(original, polished);
+            // 전사+번역 모드: 원문과 번역 모두 표시
+            if (language === 'ko') {
+              // 한국어 원문 → 영어 번역
+              showResult(original, en || '');
+            } else {
+              // 영어 원문 → 한국어 번역
+              showResult(original, ko || '');
+            }
           }
         } else if (t === 'error') {
           console.error('❗ 서버 오류:', data.message);

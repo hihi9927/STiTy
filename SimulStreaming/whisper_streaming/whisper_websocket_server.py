@@ -150,7 +150,10 @@ class WebSocketHandler:
         """Check if text ends with a meaningful phrase boundary (faster translation trigger)"""
         text_stripped = text.strip()
 
+        logger.info(f"[DEBUG check_phrase_boundary] Input text: '{text}' -> stripped: '{text_stripped}' (lang: {language})")
+
         if not text_stripped:
+            logger.info(f"[DEBUG check_phrase_boundary] Text is empty after strip")
             return False
 
         # Korean phrase boundaries
@@ -232,7 +235,9 @@ class WebSocketHandler:
                 # 추가 구어체
                 '는데용', '은데용', '니깡', '어갖고', '아갖고',
                 '어가지고', '아가지고', '해가지고',
-                '구서', '구서요', '고서', '고서요'
+                '구서', '구서요', '고서', '고서요',
+                # -ㄹ걸/-을걸 계열 (추측, 후회)
+                '걸', '을걸', 'ㄹ걸', '걸요', '을걸요'
             ]
 
             # Check if ends with standalone conjunction
@@ -513,9 +518,6 @@ class WebSocketHandler:
                 logger.info(f"[send_result] Sentence complete (punctuation) - flushing")
                 await self.flush_translation_buffer("punctuation")
             else:
-                # Check for phrase boundary (faster translation trigger)
-                full_text = ' '.join(seg['text'] for seg in self.translation_buffer)
-
                 # Get CIF fire detection status from iteration_output
                 fire_detected = iteration_output.get('fire_detected', None) if iteration_output else None
 
@@ -523,12 +525,12 @@ class WebSocketHandler:
                 if fire_detected:
                     logger.info(f"[send_result] CIF fire boundary detected - flushing for faster translation")
                     await self.flush_translation_buffer("cif_boundary")
-                # Priority 2: Check phrase boundary (conjunctions, commas)
-                elif self.check_phrase_boundary(full_text, detected_lang):
-                    logger.info(f"[send_result] Phrase boundary detected - flushing for faster translation")
-                    await self.flush_translation_buffer("phrase_boundary")
-                # Priority 3: Check if spaCy detects a sentence boundary (even without punctuation)
-                elif self.check_sentence_boundary(full_text, detected_lang):
+                # Priority 2: Check if THIS segment (just added) has phrase boundary
+                #elif self.check_phrase_boundary(text, detected_lang):
+                    #logger.info(f"[send_result] Phrase boundary detected in current segment - flushing for faster translation")
+                    #await self.flush_translation_buffer("phrase_boundary")
+                # Priority 3: Check if spaCy detects a sentence boundary in full text (even without punctuation)
+                elif self.check_sentence_boundary(' '.join(seg['text'] for seg in self.translation_buffer), detected_lang):
                     logger.info(f"[spaCy] Sentence boundary detected without punctuation")
                     await self.flush_translation_buffer("sentence_boundary")
                 else:
