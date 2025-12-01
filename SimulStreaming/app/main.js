@@ -41,7 +41,7 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
   // 개발자 도구 (필요시 주석 해제)
-  mainWindow.webContents.openDevTools();
+  // mainWindow.webContents.openDevTools();
 
   // 페이지 로딩 완료 후 준비 상태 설정
   mainWindow.webContents.on('did-finish-load', () => {
