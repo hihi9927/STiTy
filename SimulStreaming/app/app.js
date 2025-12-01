@@ -332,17 +332,26 @@ async function connectWebSocket() {
         } else if (t === 'ready') {
           console.log('✅ 서버 준비 완료', data);
         } else if (t === 'partial_cumulative' || t === 'partial') {
-          // partial: 문장이 아직 완성되지 않음 (번역 안 함, 원문만 표시)
+          // partial: 문장이 아직 완성되지 않음 (원문 + 이전 번역 표시)
           const original = data.original || '';
-          if (original) {
-            console.log('🟡 부분 결과 (원문만):', original);
+          const lastTranslation = data.last_translation || '';
 
-            // displayMode에 관계없이 partial에서는 번역 없이 원문만 표시
-            if (state.displayMode !== 'translateOnly') {
-              // transcriptOnly, both 모드: 원문만 표시
+          if (original) {
+            console.log('🟡 부분 결과:', {original, lastTranslation});
+
+            // displayMode에 따라 표시
+            if (state.displayMode === 'translateOnly') {
+              // translateOnly 모드: 이전 번역만 표시
+              if (lastTranslation) {
+                showResult(lastTranslation, '');
+              }
+            } else if (state.displayMode === 'transcriptOnly') {
+              // transcriptOnly 모드: 원문만 표시
               showResult(original, '');
+            } else {
+              // both 모드: 원문 + 이전 번역 표시
+              showResult(original, lastTranslation);
             }
-            // translateOnly 모드에서는 partial 무시 (final에서만 표시)
           }
         } else if (t === 'final') {
           // 서버에서 보낸 데이터:

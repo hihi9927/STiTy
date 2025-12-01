@@ -49,6 +49,10 @@ class WebSocketHandler:
         self.display_mode = 'both'  # Display mode: 'translateOnly', 'transcriptOnly', 'both'
         self.language_hint = 'auto'  # Language hint: 'auto', 'ko', 'en'
 
+        # Store last completed translation for showing in partial results
+        self.last_translation = ''  # Last completed translation text
+        self.last_translation_lang = None  # Language of last translation (ko or en)
+
     async def send_message(self, message_dict):
         """Send JSON message to client"""
         try:
@@ -141,6 +145,18 @@ class WebSocketHandler:
             result_msg['en'] = en_text
 
         await self.send_message(result_msg)
+
+        # Store last translation for showing in partial results
+        if lang == 'ko' and en_text:
+            self.last_translation = en_text
+            self.last_translation_lang = 'en'
+        elif lang == 'en' and ko_text:
+            self.last_translation = ko_text
+            self.last_translation_lang = 'ko'
+        else:
+            # No translation available
+            self.last_translation = ''
+            self.last_translation_lang = None
 
         # Clear the buffer
         self.translation_buffer = []
@@ -525,14 +541,15 @@ class WebSocketHandler:
                 if fire_detected:
                     logger.info(f"[send_result] CIF fire boundary detected - flushing for faster translation")
                     await self.flush_translation_buffer("cif_boundary")
-                # Priority 2: Check if THIS segment (just added) has phrase boundary
-                #elif self.check_phrase_boundary(text, detected_lang):
-                    #logger.info(f"[send_result] Phrase boundary detected in current segment - flushing for faster translation")
-                    #await self.flush_translation_buffer("phrase_boundary")
-                # Priority 3: Check if spaCy detects a sentence boundary in full text (even without punctuation)
+                # Priority 2: Check if spaCy detects a sentence boundary in full text (even without punctuation)
                 elif self.check_sentence_boundary(' '.join(seg['text'] for seg in self.translation_buffer), detected_lang):
                     logger.info(f"[spaCy] Sentence boundary detected without punctuation")
                     await self.flush_translation_buffer("sentence_boundary")
+
+                # Priority 3: Check if THIS segment (just added) has phrase boundary
+                elif self.check_phrase_boundary(text, detected_lang):
+                    logger.info(f"[send_result] Phrase boundary detected in current segment - flushing for faster translation")
+                    await self.flush_translation_buffer("phrase_boundary")
                 else:
                     # Sentence not complete yet - send cumulative partial result with translation
                     if self.display_mode != 'translateOnly':
@@ -542,32 +559,18 @@ class WebSocketHandler:
 
                         logger.info(f"[send_result] Partial cumulative ({len(self.translation_buffer)} segments): {cumulative_text}")
 
-                        # Translate partial text for faster display
-                        lang, ko_text, en_text = await self.detect_and_translate(cumulative_text, detected_lang, None)
-
-                        # Determine polished text based on language
-                        polished = cumulative_text
-                        if lang == 'ko' and en_text:
-                            polished = en_text
-                        elif lang == 'en' and ko_text:
-                            polished = ko_text
-
+                        # For partial, show last completed translation (not current partial translation)
                         result_msg = {
                             'type': 'partial',
                             'start': first_start,
                             'end': end_ms,
-                            'original': cumulative_text,  # Cumulative text instead of single segment
-                            'polished': polished,  # Add translation for partial
+                            'original': cumulative_text,  # Current partial text
+                            'last_translation': self.last_translation,  # Last completed translation
                             'language': detected_lang
                         }
 
-                        if ko_text:
-                            result_msg['ko'] = ko_text
-                        if en_text:
-                            result_msg['en'] = en_text
-
                         await self.send_message(result_msg)
-                        logger.info(f"[send_result] Partial translation sent: {polished}")
+                        logger.info(f"[send_result] Partial sent: {cumulative_text} (showing last translation: {self.last_translation})")
                     else:
                         logger.info(f"[send_result] Partial segment skipped (translateOnly mode, buffer: {len(self.translation_buffer)} segments)")
         else:
