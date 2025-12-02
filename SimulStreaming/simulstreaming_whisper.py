@@ -48,6 +48,14 @@ def simulwhisper_args(parser):
     group.add_argument("--static_init_prompt",type=str, default=None, help="Do not scroll over this text. It can contain terminology that should be relevant over all document.")
     group.add_argument("--max_context_tokens",type=int, default=None, help="Max context tokens for the model. Default is 0.")
 
+    group = parser.add_argument_group("Speculative decoding")
+    group.add_argument("--use_speculative_decoding", action="store_true", default=False,
+                       help="Enable speculative decoding with distil-whisper for faster inference (only works with greedy decoder)")
+    group.add_argument("--assistant_model_path", type=str, default=None,
+                       help="Path to assistant model (e.g., distil-large-v3.pt) for speculative decoding")
+    group.add_argument("--num_assistant_tokens", type=int, default=5,
+                       help="Number of tokens to predict ahead with assistant model (default: 5)")
+
 
 def simul_asr_factory(args):
     logger.setLevel(args.log_level)
@@ -67,7 +75,8 @@ def simul_asr_factory(args):
         # else: it is greedy or beam, that's ok 
     
     a = { v:getattr(args, v) for v in ["model_path", "cif_ckpt_path", "frame_threshold", "audio_min_len", "audio_max_len", "beams", "task",
-                                       "never_fire", 'init_prompt', 'static_init_prompt', 'max_context_tokens', "logdir"
+                                       "never_fire", 'init_prompt', 'static_init_prompt', 'max_context_tokens', "logdir",
+                                       "use_speculative_decoding", "assistant_model_path", "num_assistant_tokens"
                                        ]}
     a["language"] = args.lan
     a["segment_length"] = args.min_chunk_size
@@ -86,7 +95,8 @@ class SimulWhisperASR(ASRBase):
     sep = " "
 
     def __init__(self, language, model_path, cif_ckpt_path, frame_threshold, audio_max_len, audio_min_len, segment_length, beams, task, 
-                 decoder_type, never_fire, init_prompt, static_init_prompt, max_context_tokens, logdir):
+                 decoder_type, never_fire, init_prompt, static_init_prompt, max_context_tokens, logdir,
+                 use_speculative_decoding=False, assistant_model_path=None, num_assistant_tokens=5):
         cfg = AlignAttConfig(
             model_path=model_path, 
             segment_length=segment_length,
@@ -103,6 +113,9 @@ class SimulWhisperASR(ASRBase):
             max_context_tokens=max_context_tokens,
             static_init_prompt=static_init_prompt,
             logdir=logdir,
+            use_speculative_decoding=use_speculative_decoding,
+            assistant_model_path=assistant_model_path,
+            num_assistant_tokens=num_assistant_tokens,
         )
         logger.info(f"Language: {language}")
         self.model = PaddedAlignAttWhisper(cfg)

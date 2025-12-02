@@ -17,6 +17,11 @@ class SimulWhisperConfig:
     static_init_prompt: str = field(default=None)
     max_context_tokens: int = field(default=None)
 
+    # Speculative decoding options
+    use_speculative_decoding: bool = field(default=False, metadata={"help": "Enable speculative decoding with distil-whisper"})
+    assistant_model_path: str = field(default=None, metadata={"help": "Path to assistant model (e.g., distil-whisper)"})
+    num_assistant_tokens: int = field(default=5, metadata={"help": "Number of tokens to predict ahead with assistant model"})
+
     logdir: str = field(default="logdir", metadata={"help": "Directory to save audio segments and tokens for debugging purposes."})
 
 @dataclass

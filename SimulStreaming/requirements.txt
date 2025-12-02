@@ -6,6 +6,7 @@ torchaudio
 
 # from SimulWhisper
 torch
+transformers
 
 # from Whisper
 tqdm
@@ -20,7 +21,6 @@ websockets
 # for translation
 deep-translator
 
-# for sentence boundary detection
-spacy
-
+# for denoiser
+speechbrain
 

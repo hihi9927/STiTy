@@ -31,10 +31,29 @@ except OSError:
     nlp_en = None
 
 
+def load_denoiser_model():
+    """Load SpeechBrain FullSubNet+ denoiser once at server startup."""
+    try:
+        import torch  # noqa: F401
+        from speechbrain.pretrained import SpectralMaskEnhancement
+        logger.info("[Denoiser] Loading FullSubNet+ model (one-time)...")
+        model = SpectralMaskEnhancement.from_hparams(
+            source="speechbrain/mtl-mimic-voicebank",
+            savedir="pretrained_models/mtl-mimic-voicebank"
+        )
+        logger.info("[Denoiser] Model loaded successfully!")
+        return model
+    except ImportError:
+        logger.error("[Denoiser] Failed to import speechbrain. Install with: pip install speechbrain")
+    except Exception as e:
+        logger.error(f"[Denoiser] Failed to load model: {e}")
+    return None
+
+
 class WebSocketHandler:
     """Handles WebSocket connection and ASR processing for one client"""
 
-    def __init__(self, websocket, online_asr_proc, min_chunk):
+    def __init__(self, websocket, online_asr_proc, min_chunk, use_denoiser=False, denoiser_model=None):
         self.websocket = websocket
         self.online_asr_proc = online_asr_proc
         self.min_chunk = min_chunk
@@ -61,6 +80,13 @@ class WebSocketHandler:
             'thank you for watching', 'thanks for watching',
             '자막', '구독', '좋아요', '알림 설정'  # Common YouTube artifacts
         ]
+
+        # Denoiser setup
+        self.use_denoiser = use_denoiser
+        self.denoiser_model = denoiser_model if self.use_denoiser else None
+        if self.use_denoiser and self.denoiser_model is None:
+            logger.error("[Denoiser] Denoiser not available, disabling denoise.")
+            self.use_denoiser = False
 
     async def send_message(self, message_dict):
         """Send JSON message to client"""
@@ -209,7 +235,7 @@ class WebSocketHandler:
                 logger.warning(f"[Hallucination] Detected meta phrase: '{phrase}' in '{text}'")
                 return True, f"meta_phrase:{phrase}"
 
-        # Check for repeated phrase patterns (e.g., "/ 그냥 가야 돼. / 그냥 가야 돼. ...")
+        # Check for repeated phrase patterns
         # Split by punctuation (including comma) to find repeated phrases
         import re
         sentences = re.split(r'[.!?,。!?]\s*', text)  # Added comma to split pattern
@@ -873,6 +899,25 @@ class WebSocketHandler:
             # Convert to float32 for Whisper (range: -32768 ~ 32767 -> -1.0 ~ 1.0)
             audio_float = audio_int16.astype(np.float32) / 32768.0
 
+            # Apply noise reduction if enabled
+            if self.use_denoiser and self.denoiser_model is not None:
+                try:
+                    import torch
+                    with torch.no_grad():
+                        # FullSubNet+ expects shape: [batch, samples]
+                        audio_tensor = torch.from_numpy(audio_float).float().unsqueeze(0)
+
+                        # Apply denoising - enhance_batch expects [batch, time]
+                        denoised = self.denoiser_model.enhance_batch(audio_tensor, lengths=torch.tensor([1.0]))
+
+                        # Convert back to numpy
+                        audio_float = denoised.squeeze().cpu().numpy()
+
+                        logger.debug(f"[Denoiser] Applied noise reduction to {len(audio_float)} samples")
+                except Exception as e:
+                    logger.error(f"[Denoiser] Error during noise reduction: {e}")
+                    # Continue with original audio if denoising fails
+
             logger.debug(f"Received Int16 audio: {len(audio_int16)} samples -> {len(audio_float)} float32 samples")
             return audio_float
 
@@ -999,9 +1044,15 @@ class WebSocketHandler:
             logger.info("WebSocket connection closed")
 
 
-async def websocket_server(websocket, online_asr_proc, min_chunk):
+async def websocket_server(websocket, online_asr_proc, min_chunk, use_denoiser=False, denoiser_model=None):
     """WebSocket server handler"""
-    handler = WebSocketHandler(websocket, online_asr_proc, min_chunk)
+    handler = WebSocketHandler(
+        websocket,
+        online_asr_proc,
+        min_chunk,
+        use_denoiser=use_denoiser,
+        denoiser_model=denoiser_model
+    )
     await handler.handle()
 
 
@@ -1023,6 +1074,10 @@ def main_websocket_server(factory, add_args):
     parser.add_argument("--warmup-file", type=str, dest="warmup_file",
             help="The path to a speech audio wav file to warm up Whisper so that the very first chunk processing is fast. It can be e.g. "
             "https://github.com/ggerganov/whisper.cpp/raw/master/samples/jfk.wav .")
+
+    # Noise reduction option
+    parser.add_argument("--denoise", action="store_true",
+            help="Enable real-time noise reduction using FullSubNet+ (SpeechBrain). Effective for background conversations and murmuring. Requires: pip install speechbrain")
 
     # options from whisper_online
     processor_args(parser)
@@ -1053,13 +1108,25 @@ def main_websocket_server(factory, add_args):
     else:
         logger.warning(msg)
 
+    # Preload denoiser once (if enabled)
+    denoiser_model = load_denoiser_model() if args.denoise else None
+    if args.denoise and denoiser_model is None:
+        logger.warning("[Denoiser] Disabled because model failed to load.")
+
     # Start WebSocket server
     async def server_handler(websocket):
         # warmup된 online 객체를 직접 사용 (단일 클라이언트만 지원)
-        await websocket_server(websocket, online, min_chunk)
+        await websocket_server(
+            websocket,
+            online,
+            min_chunk,
+            use_denoiser=args.denoise and denoiser_model is not None,
+            denoiser_model=denoiser_model
+        )
 
     async def main():
-        logger.info(f'Starting WebSocket server on ws://{args.host}:{args.port}')
+        denoiser_status = "enabled" if args.denoise and denoiser_model is not None else "disabled"
+        logger.info(f'Starting WebSocket server on ws://{args.host}:{args.port} (Denoiser: {denoiser_status})')
 
         async with websockets.serve(
             server_handler,

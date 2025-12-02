@@ -51,6 +51,10 @@ def resize(alphas, target_lengths, threshold=0.999):
     return _alphas, _num
  
 def fire_at_boundary(chunked_encoder_feature: torch.Tensor, cif_linear):
+    # Guard against empty input (can happen on very short/empty segments)
+    if chunked_encoder_feature.numel() == 0 or chunked_encoder_feature.shape[1] == 0:
+        return False
+
     content_mel_len = chunked_encoder_feature.shape[1] # B, T, D
     alphas = cif_linear(chunked_encoder_feature).squeeze(dim=2) # B, T
     alphas = torch.sigmoid(alphas)

@@ -20,6 +20,14 @@ from token_buffer import TokenBuffer
 import numpy as np
 from .generation_progress import *
 
+# Optional HF assistant model wrapper (for distil-whisper etc.)
+try:
+    from transformers import AutoModelForSpeechSeq2Seq
+    from transformers.modeling_outputs import BaseModelOutput
+except ImportError:  # keep runtime flexible when HF is not installed
+    AutoModelForSpeechSeq2Seq = None
+    BaseModelOutput = None
+
 DEC_PAD = 50257
 logger = logging.getLogger(__name__)
 
@@ -52,6 +60,11 @@ class PaddedAlignAttWhisper:
         self.model = load_model(name=model_name, download_root=model_path)
 
         logger.info(f"Model dimensions: {self.model.dims}")
+
+        # Load assistant model for speculative decoding if enabled
+        self.assistant_model = None
+        if cfg.use_speculative_decoding and cfg.assistant_model_path:
+            self.assistant_model = self._load_assistant_model(cfg.assistant_model_path)
 
         self.decode_options = DecodingOptions(
             language = cfg.language, 
@@ -138,16 +151,99 @@ class PaddedAlignAttWhisper:
 
         # decoder type: greedy or beam
         if cfg.decoder_type == "greedy":
-            logger.info("Using greedy decoder")
-            self.token_decoder = GreedyDecoder(0.0, self.tokenizer.eot)
+            # Use speculative decoder if assistant model is available
+            if self.assistant_model is not None and cfg.use_speculative_decoding:
+                from .speculative_decoder import SpeculativeGreedyDecoder
+                logger.info(f"Using speculative greedy decoder with {cfg.num_assistant_tokens} lookahead tokens")
+                self.token_decoder = SpeculativeGreedyDecoder(
+                    temperature=0.0,
+                    eot=self.tokenizer.eot,
+                    assistant_model=self.assistant_model,
+                    num_assistant_tokens=cfg.num_assistant_tokens,
+                    use_speculative=True
+                )
+            else:
+                logger.info("Using standard greedy decoder")
+                self.token_decoder = GreedyDecoder(0.0, self.tokenizer.eot)
             self.decoder_type = "greedy"
 
         elif cfg.decoder_type == "beam":
             self.decoder_type = "beam"
+            if cfg.use_speculative_decoding:
+                logger.warning("Speculative decoding is not supported with beam search. Using standard beam search.")
             self.inference = BeamPyTorchInference(self.model, self.initial_token_length)
             self.inference.kv_cache = self.kv_cache
 
             self.token_decoder = BeamSearchDecoder(inference=self.inference, eot=self.tokenizer.eot, beam_size=cfg.beam_size)
+
+    def _load_assistant_model(self, path: str):
+        """
+        Load assistant model.
+        - If path points to an existing .pt, load with local load_model (OpenAI checkpoint format).
+        - Otherwise, try Hugging Face distil-whisper (HF Hub ID or local directory).
+        """
+        # 1) Local .pt (OpenAI-format) path
+        if os.path.isfile(path):
+            try:
+                logger.info(f"Loading assistant model (.pt) for speculative decoding: {path}")
+                assistant_name = os.path.basename(path).replace(".pt", "")
+                assistant_path = os.path.dirname(os.path.abspath(path))
+                model = load_model(name=assistant_name, download_root=assistant_path)
+                model.eval()
+                return model
+            except Exception as e:
+                logger.warning(f"Failed to load assistant .pt model '{path}': {e}")
+                return None
+
+        # 2) Hugging Face model id/directory (e.g., distil-whisper/distil-large-v2)
+        if AutoModelForSpeechSeq2Seq is None or BaseModelOutput is None:
+            logger.warning("transformers is not installed, cannot load HF assistant model.")
+            return None
+
+        try:
+            hf_id = path
+            logger.info(f"Loading assistant model from Hugging Face: {hf_id}")
+
+            # Match dtype/device to main model
+            dtype = next(self.model.parameters()).dtype
+            device = next(self.model.parameters()).device
+
+            hf_model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                hf_id,
+                torch_dtype=dtype,
+                low_cpu_mem_usage=True,
+            ).to(device)
+            hf_model.eval()
+
+            class HFWhisperAssistantWrapper(torch.nn.Module):
+                """Adapter to expose HF Whisper logits(tokens, encoder_features) API."""
+
+                def __init__(self, model_ref):
+                    super().__init__()
+                    self.model_ref = model_ref
+
+                def logits(self, tokens: torch.Tensor, encoder_features: torch.Tensor) -> torch.Tensor:
+                    # Ensure correct dtype/device
+                    if encoder_features.dtype != self.model_ref.dtype:
+                        encoder_features = encoder_features.to(dtype=self.model_ref.dtype)
+                    if encoder_features.device != self.model_ref.device:
+                        encoder_features = encoder_features.to(self.model_ref.device)
+                    if tokens.device != self.model_ref.device:
+                        tokens = tokens.to(self.model_ref.device)
+
+                    outputs = self.model_ref(
+                        encoder_outputs=BaseModelOutput(last_hidden_state=encoder_features),
+                        decoder_input_ids=tokens,
+                        use_cache=False,
+                    )
+                    return outputs.logits
+
+            logger.info("Assistant model loaded successfully from Hugging Face for speculative decoding")
+            return HFWhisperAssistantWrapper(hf_model)
+
+        except Exception as e:
+            logger.warning(f"Failed to load assistant model from HF ({path}): {e}")
+            return None
 
     def create_tokenizer(self, language=None):
         self.tokenizer = tokenizer.get_tokenizer(
@@ -533,7 +629,13 @@ class PaddedAlignAttWhisper:
             #generation_progress_loop.append(("logits_after_suppres",BeamLogits(logits[0,:].clone(), self.cfg.beam_size)))
             generation_progress_loop.append(("logits_after_suppress",Logits(logits)))
 
-            current_tokens, completed = self.token_decoder.update(current_tokens, logits, sum_logprobs)
+            # Pass mel and model for speculative decoding
+            if hasattr(self.token_decoder, 'use_speculative') and self.token_decoder.use_speculative:
+                current_tokens, completed = self.token_decoder.update(
+                    current_tokens, logits, sum_logprobs, mel=encoder_feature, main_model=self.model
+                )
+            else:
+                current_tokens, completed = self.token_decoder.update(current_tokens, logits, sum_logprobs)
             generation_progress_loop.append(("beam_tokens",Tokens(current_tokens[:,-1].clone())))
             generation_progress_loop.append(("sum_logprobs",sum_logprobs.tolist()))
             generation_progress_loop.append(("completed",completed))
