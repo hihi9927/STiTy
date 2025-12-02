@@ -53,6 +53,15 @@ class WebSocketHandler:
         self.last_translation = ''  # Last completed translation text
         self.last_translation_lang = None  # Language of last translation (ko or en)
 
+        # Hallucination detection
+        self.recent_tokens = []  # Track recent tokens for repetition detection
+        self.hallucination_phrases = [
+            'speaking in foreign language', 'speaking korean', 'speaking english',
+            'speaking in korean', 'speaking in english',
+            'thank you for watching', 'thanks for watching',
+            '자막', '구독', '좋아요', '알림 설정'  # Common YouTube artifacts
+        ]
+
     async def send_message(self, message_dict):
         """Send JSON message to client"""
         try:
@@ -160,7 +169,221 @@ class WebSocketHandler:
 
         # Clear the buffer
         self.translation_buffer = []
+        # Reset token tracking after successful translation
+        self.recent_tokens = []
         logger.info(f"[Translation] Buffer cleared after {trigger_reason}")
+
+    def clean_special_characters(self, text):
+        """Remove unwanted special characters from text"""
+        import re
+
+        # Remove brackets and their contents (e.g., [Music], [Applause])
+        text = re.sub(r'\[.*?\]', '', text)
+
+        # Remove diamond with question mark (�) and other common unicode errors
+        text = text.replace('�', '')
+
+        # Remove other problematic characters
+        text = text.replace('♪', '')  # Music notes
+        text = text.replace('♫', '')  # Music notes
+
+        # Clean up multiple spaces
+        text = re.sub(r'\s+', ' ', text)
+
+        return text.strip()
+
+    def is_hallucination(self, text):
+        """Detect if text is likely a hallucination
+        Returns: (is_hallucination: bool, reason: str)"""
+
+        text_lower = text.lower().strip()
+
+        # Check for brackets (often contains noise like [Music], [Applause])
+        if '[' in text or ']' in text:
+            logger.warning(f"[Hallucination] Detected brackets in text: '{text}'")
+            return True, "brackets"
+
+        # Check for known hallucination phrases
+        for phrase in self.hallucination_phrases:
+            if phrase in text_lower:
+                logger.warning(f"[Hallucination] Detected meta phrase: '{phrase}' in '{text}'")
+                return True, f"meta_phrase:{phrase}"
+
+        # Check for repeated phrase patterns (e.g., "/ 그냥 가야 돼. / 그냥 가야 돼. ...")
+        # Split by punctuation (including comma) to find repeated phrases
+        import re
+        sentences = re.split(r'[.!?,。!?]\s*', text)  # Added comma to split pattern
+        sentences = [s.strip() for s in sentences if s.strip()]
+
+        if len(sentences) >= 3:
+            # Check if we have the same sentence repeated 3+ times
+            from collections import Counter
+            sentence_counts = Counter(sentences)
+            most_common_sentence, count = sentence_counts.most_common(1)[0]
+
+            if count >= 3:
+                logger.warning(f"[Hallucination] Detected repeated phrase (x{count}): '{most_common_sentence}'")
+                return True, f"repeated_phrase:x{count}"
+
+        # Split into words and check for repetition
+        words = text.split()
+
+        if len(words) < 3:
+            return False, None
+
+        # Check last 10 words for unique count
+        recent_words = words[-10:]
+        unique_words = set(recent_words)
+
+        if len(unique_words) < 2:
+            logger.warning(f"[Hallucination] Too few unique words in recent segment: {unique_words}")
+            return True, "low_unique_words"
+
+        # Check for consecutive identical words (e.g., "1 1 1 1 1")
+        consecutive_count = 1
+        max_consecutive = 1
+
+        for i in range(1, len(words)):
+            if words[i] == words[i-1]:
+                consecutive_count += 1
+                max_consecutive = max(max_consecutive, consecutive_count)
+            else:
+                consecutive_count = 1
+
+        if max_consecutive >= 5:
+            logger.warning(f"[Hallucination] Detected {max_consecutive} consecutive identical words: '{words[0]}'")
+            return True, f"consecutive_repetition:{max_consecutive}"
+
+        # Check total token count in recent_tokens (accumulated across segments)
+        self.recent_tokens.extend(words)
+        if len(self.recent_tokens) > 200:
+            logger.warning(f"[Hallucination] Token count exceeded 200: {len(self.recent_tokens)}")
+            return True, "token_overflow"
+
+        return False, None
+
+    def find_boundary_in_text(self, text, language):
+        """Find the last boundary position within text (not just at the end)
+        Returns: (boundary_pos, boundary_type) or (None, None) if no boundary found
+        boundary_pos is the character position after the boundary"""
+
+        if not text or not text.strip():
+            return None, None
+
+        # Check for sentence-ending punctuation first (highest priority)
+        punctuation_marks = ['.', '!', '?', '。', '!', '?']
+        last_punct_pos = -1
+        for punct in punctuation_marks:
+            pos = text.rfind(punct)
+            if pos > last_punct_pos:
+                last_punct_pos = pos
+
+        if last_punct_pos >= 0:
+            logger.info(f"[Boundary Detection] Found punctuation at position {last_punct_pos}: '{text[last_punct_pos]}'")
+            return last_punct_pos + 1, "punctuation"
+
+        # Check for phrase boundaries (Korean/English patterns)
+        if language == 'ko':
+            ko_conjunctions = [
+                '그리고', '그런데', '하지만', '그래서', '그러나', '그러니', '그러니까',
+                '그러면', '그럼', '그렇지만', '그치만', '그렇다면',
+                '또', '또는', '또한', '더욱이', '게다가', '뿐만아니라',
+                '근데', '그래도', '그렇더라도', '그런데도', '그래봤자',
+                '따라서', '그러므로', '그렇기때문에', '그때문에', '그럼에도', '그럼에도불구하고',
+                '즉', '다시말해', '다시말하면', '요컨대',
+                '한편', '반면', '반면에', '이에반해', '이와달리',
+                '물론', '확실히', '당연히', '분명히',
+                '예를들어', '예를들면', '가령',
+                '아무튼', '어쨌든', '여하튼', '하여튼',
+                '왜냐하면', '왜냐', '외', '그외', '그외에', '그밖에',
+                '특히', '무엇보다', '더구나', '심지어',
+                '만약', '만일', '혹시', '설령',
+                '비록', '설사', '가령', '단',
+                '결국', '마침내', '드디어', '끝내',
+                '그때', '그순간', '그후', '이후', '그다음', '그뒤'
+            ]
+
+            ko_endings = [
+                '고', '구', '구요', '고요',
+                '며', '면서', '으면서', '면', '으면',
+                '지만', '지만요', '긴하지만', '긴한데',
+                '는데', '은데', 'ㄴ데', '런데', '인데', '은데요', '는데요',
+                '니까', '니깐', '으니까', '으니깐', '니', '으니',
+                '어서', '아서', '서', '어서요', '아서요',
+                '려고', 'ㄹ려고', '으려고', '려구', '으려구',
+                '다가', '다가요', '었다가', '았다가', '였다가',
+                '거나', '거나요', '든지', '든가',
+                '자마자', '자', '자요',
+                '수록', '을수록',
+                '때', '을때', '땐', '을땐',
+                '도록', '토록',
+                '게', '게끔',
+                '길래', '기에',
+                '채', '은채', '채로', '은채로',
+                '듯', '듯이', '듯이요',
+                '나', '으나', '냐', '으냐',
+                '든', '든지', '든가',
+                '랴', '으랴',
+                '건', '건만',
+                '건데', '거든', '거든요',
+                '느라', '느라고',
+                '다시피', '다시피요',
+                '던데', '더니', '더라',
+                '자니', '자니까',
+                '기로', '기로서니',
+                '으면', '면',
+                '지', '을지',
+                '는데용', '은데용', '니깡', '어갖고', '아갖고',
+                '어가지고', '아가지고', '해가지고',
+                '구서', '구서요', '고서', '고서요',
+                '걸', '을걸', 'ㄹ걸', '걸요', '을걸요',
+                ','
+            ]
+
+            # Find last occurrence of any pattern
+            last_boundary_pos = -1
+            found_pattern = None
+
+            # Check conjunctions (word boundaries)
+            for pattern in ko_conjunctions:
+                # Find last occurrence
+                pos = text.rfind(' ' + pattern + ' ')
+                if pos > last_boundary_pos:
+                    last_boundary_pos = pos + len(' ' + pattern)
+                    found_pattern = pattern
+                # Also check if it's at the end
+                if text.rstrip().endswith(' ' + pattern):
+                    pos = text.rfind(' ' + pattern)
+                    if pos > last_boundary_pos:
+                        last_boundary_pos = len(text.rstrip())
+                        found_pattern = pattern
+
+            # Check endings
+            for pattern in ko_endings:
+                # Find all occurrences
+                idx = text.rfind(pattern)
+                while idx >= 0:
+                    # Check if it's followed by space or is at the end
+                    if idx + len(pattern) < len(text):
+                        next_char = text[idx + len(pattern)]
+                        if next_char == ' ':
+                            if idx + len(pattern) > last_boundary_pos:
+                                last_boundary_pos = idx + len(pattern)
+                                found_pattern = pattern
+                    else:
+                        # At the end
+                        if idx + len(pattern) > last_boundary_pos:
+                            last_boundary_pos = idx + len(pattern)
+                            found_pattern = pattern
+
+                    # Find previous occurrence
+                    idx = text.rfind(pattern, 0, idx)
+
+            if last_boundary_pos > 0:
+                logger.info(f"[Boundary Detection] Found Korean pattern '{found_pattern}' at position {last_boundary_pos}")
+                return last_boundary_pos, "phrase"
+
+        return None, None
 
     def check_phrase_boundary(self, text, language):
         """Check if text ends with a meaningful phrase boundary (faster translation trigger)"""
@@ -516,63 +739,128 @@ class WebSocketHandler:
             logger.info(f"[send_result] Text segment: {text}")
             logger.info(f"[send_result] Detected language: {detected_lang}")
 
-            # Add to translation buffer
-            self.translation_buffer.append({
-                'text': text,
-                'start': start_ms,
-                'end': end_ms
-            })
+            # Check for hallucination BEFORE cleaning (to detect brackets)
+            is_halluc, halluc_reason = self.is_hallucination(text)
+            if is_halluc:
+                logger.warning(f"[Hallucination] Detected in segment: '{text}' - reason: {halluc_reason}")
+                # Discard this segment and clear buffer
+                logger.info(f"[Hallucination] Discarding segment and clearing buffer ({len(self.translation_buffer)} segments)")
+                self.translation_buffer = []
+                self.recent_tokens = []  # Reset token tracking
+                # Reset ASR to clear context
+                self.online_asr_proc.init()
+                logger.info("[Hallucination] ASR processor reset")
+                return  # Skip this segment entirely
 
-            logger.info(f"[send_result] Buffer now has {len(self.translation_buffer)} segments")
+            # Clean special characters (�, ♪, etc.)
+            text = self.clean_special_characters(text)
+            if not text or not text.strip():
+                logger.info(f"[send_result] Text is empty after cleaning - skipping")
+                return
 
-            # Check if this segment ends with sentence-ending punctuation
-            # This indicates the sentence is complete and ready for translation
-            sentence_complete = any(text.endswith(p) for p in ['.', '!', '?', '。', '!', '?'])
+            # Check if the new segment contains a boundary in the middle
+            boundary_pos, boundary_type = self.find_boundary_in_text(text, detected_lang)
 
-            if sentence_complete:
-                # Sentence is complete - translate the entire buffer
-                logger.info(f"[send_result] Sentence complete (punctuation) - flushing")
-                await self.flush_translation_buffer("punctuation")
-            else:
-                # Get CIF fire detection status from iteration_output
-                fire_detected = iteration_output.get('fire_detected', None) if iteration_output else None
+            if boundary_pos is not None and boundary_pos < len(text.rstrip()):
+                # Boundary found in the middle of the segment - split it
+                before_boundary = text[:boundary_pos].strip()
+                after_boundary = text[boundary_pos:].strip()
 
-                # Priority 1: CIF model boundary detection (most accurate!)
-                if fire_detected:
-                    logger.info(f"[send_result] CIF fire boundary detected - flushing for faster translation")
-                    await self.flush_translation_buffer("cif_boundary")
-                # Priority 2: Check if spaCy detects a sentence boundary in full text (even without punctuation)
-                elif self.check_sentence_boundary(' '.join(seg['text'] for seg in self.translation_buffer), detected_lang):
-                    logger.info(f"[spaCy] Sentence boundary detected without punctuation")
-                    await self.flush_translation_buffer("sentence_boundary")
+                logger.info(f"[send_result] Boundary found inside segment at position {boundary_pos}")
+                logger.info(f"[send_result] Before: '{before_boundary}' | After: '{after_boundary}'")
 
-                # Priority 3: Check if THIS segment (just added) has phrase boundary
-                elif self.check_phrase_boundary(text, detected_lang):
-                    logger.info(f"[send_result] Phrase boundary detected in current segment - flushing for faster translation")
-                    await self.flush_translation_buffer("phrase_boundary")
-                else:
-                    # Sentence not complete yet - send cumulative partial result with translation
+                # Add the part before boundary to buffer
+                if before_boundary:
+                    self.translation_buffer.append({
+                        'text': before_boundary,
+                        'start': start_ms,
+                        'end': end_ms  # Approximate - we don't have exact timing
+                    })
+
+                # Flush the buffer (translate the part before boundary)
+                logger.info(f"[send_result] Flushing buffer due to mid-segment {boundary_type}")
+                await self.flush_translation_buffer(f"mid_segment_{boundary_type}")
+
+                # Start new buffer with the part after boundary
+                if after_boundary:
+                    self.translation_buffer.append({
+                        'text': after_boundary,
+                        'start': end_ms,  # Approximate
+                        'end': end_ms
+                    })
+                    logger.info(f"[send_result] New buffer started with: '{after_boundary}'")
+
+                    # Send partial for the remaining text
                     if self.display_mode != 'translateOnly':
-                        # Send cumulative text (all buffered segments combined)
-                        cumulative_text = ' '.join(seg['text'] for seg in self.translation_buffer)
-                        first_start = self.translation_buffer[0]['start']
-
-                        logger.info(f"[send_result] Partial cumulative ({len(self.translation_buffer)} segments): {cumulative_text}")
-
-                        # For partial, show last completed translation (not current partial translation)
                         result_msg = {
                             'type': 'partial',
-                            'start': first_start,
+                            'start': end_ms,
                             'end': end_ms,
-                            'original': cumulative_text,  # Current partial text
-                            'last_translation': self.last_translation,  # Last completed translation
+                            'original': after_boundary,
+                            'last_translation': self.last_translation,
                             'language': detected_lang
                         }
-
                         await self.send_message(result_msg)
-                        logger.info(f"[send_result] Partial sent: {cumulative_text} (showing last translation: {self.last_translation})")
+            else:
+                # No boundary in the middle - proceed with normal logic
+                # Add to translation buffer
+                self.translation_buffer.append({
+                    'text': text,
+                    'start': start_ms,
+                    'end': end_ms
+                })
+
+                logger.info(f"[send_result] Buffer now has {len(self.translation_buffer)} segments")
+
+                # Check if this segment ends with sentence-ending punctuation
+                sentence_complete = any(text.endswith(p) for p in ['.', '!', '?', '。', '!', '?'])
+
+                if sentence_complete:
+                    # Sentence is complete - translate the entire buffer
+                    logger.info(f"[send_result] Sentence complete (punctuation) - flushing")
+                    await self.flush_translation_buffer("punctuation")
+                else:
+                    # Get CIF fire detection status from iteration_output
+                    fire_detected = iteration_output.get('fire_detected', None) if iteration_output else None
+
+                    # Priority 1: CIF model boundary detection (most accurate!)
+                    if fire_detected:
+                        logger.info(f"[send_result] CIF fire boundary detected - flushing for faster translation")
+                        await self.flush_translation_buffer("cif_boundary")
+                    # Priority 2: Check if spaCy detects a sentence boundary in full text (even without punctuation)
+                    # DISABLED: spaCy causes performance bottleneck by processing entire buffer every segment (O(n²) complexity)
+                    # CIF model + rule-based patterns are sufficient for boundary detection
+                    # elif self.check_sentence_boundary(' '.join(seg['text'] for seg in self.translation_buffer), detected_lang):
+                    #     logger.info(f"[spaCy] Sentence boundary detected without punctuation")
+                    #     await self.flush_translation_buffer("sentence_boundary")
+
+                    # Priority 2 (was 3): Check if THIS segment (just added) has phrase boundary
+                    elif self.check_phrase_boundary(text, detected_lang):
+                        logger.info(f"[send_result] Phrase boundary detected in current segment - flushing for faster translation")
+                        await self.flush_translation_buffer("phrase_boundary")
                     else:
-                        logger.info(f"[send_result] Partial segment skipped (translateOnly mode, buffer: {len(self.translation_buffer)} segments)")
+                        # Sentence not complete yet - send cumulative partial result with translation
+                        if self.display_mode != 'translateOnly':
+                            # Send cumulative text (all buffered segments combined)
+                            cumulative_text = ' '.join(seg['text'] for seg in self.translation_buffer)
+                            first_start = self.translation_buffer[0]['start']
+
+                            logger.info(f"[send_result] Partial cumulative ({len(self.translation_buffer)} segments): {cumulative_text}")
+
+                            # For partial, show last completed translation (not current partial translation)
+                            result_msg = {
+                                'type': 'partial',
+                                'start': first_start,
+                                'end': end_ms,
+                                'original': cumulative_text,  # Current partial text
+                                'last_translation': self.last_translation,  # Last completed translation
+                                'language': detected_lang
+                            }
+
+                            await self.send_message(result_msg)
+                            logger.info(f"[send_result] Partial sent: {cumulative_text} (showing last translation: {self.last_translation})")
+                        else:
+                            logger.info(f"[send_result] Partial segment skipped (translateOnly mode, buffer: {len(self.translation_buffer)} segments)")
         else:
             logger.debug("No text in this segment")
 
