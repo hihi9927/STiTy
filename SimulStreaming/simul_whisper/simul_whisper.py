@@ -314,8 +314,11 @@ class PaddedAlignAttWhisper:
         logger.debug("Refreshing segment:")
         self.init_tokens()
         self.last_attend_frame = -self.cfg.rewind_threshold
-        self.detected_language = None
-        self.detected_language_probs = None
+        # Only reset detected_language if in auto mode
+        # When language is forced (not "auto"), keep the detected_language to prevent re-detection
+        if self.cfg.language == "auto":
+            self.detected_language = None
+            self.detected_language_probs = None
         self.init_context()
         logger.debug(f"Context: {self.context}")
         if not complete and len(self.segments) > 2:

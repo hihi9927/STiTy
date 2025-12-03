@@ -1008,10 +1008,39 @@ class WebSocketHandler:
                             if 'displayMode' in data:
                                 self.display_mode = data['displayMode']
                                 logger.info(f"Display mode set to: {self.display_mode}")
-                            # Get language hint from client
-                            if 'languageHint' in data:
-                                self.language_hint = data['languageHint']
+                            # Get language hint from client (check both 'lang' and 'languageHint' for backwards compatibility)
+                            lang_hint = data.get('lang') or data.get('languageHint')
+                            if lang_hint:
+                                self.language_hint = lang_hint
                                 logger.info(f"Language hint set to: {self.language_hint}")
+
+                                # Force Whisper model to use the specified language
+                                # This ensures transcription happens in the correct language
+                                if hasattr(self.online_asr_proc, 'model'):
+                                    if lang_hint != 'auto':
+                                        # Update config language (prevents auto language detection in simul_whisper.py line 521)
+                                        self.online_asr_proc.model.cfg.language = lang_hint
+                                        # Update decode_options language
+                                        if hasattr(self.online_asr_proc.model, 'decode_options'):
+                                            self.online_asr_proc.model.decode_options = self.online_asr_proc.model.decode_options._replace(language=lang_hint)
+                                        # Force detected_language to match hint (prevents re-detection)
+                                        self.online_asr_proc.model.detected_language = lang_hint
+                                        # Recreate tokenizer for the specified language
+                                        self.online_asr_proc.model.create_tokenizer(lang_hint)
+                                        # Reinitialize tokens with the new tokenizer to ensure correct language tokens
+                                        self.online_asr_proc.model.init_tokens()
+                                        logger.info(f"[Whisper] Forced model language to: {lang_hint} (cfg.language={self.online_asr_proc.model.cfg.language})")
+                                    else:
+                                        # Auto-detect mode: set language to auto
+                                        self.online_asr_proc.model.cfg.language = 'auto'
+                                        if hasattr(self.online_asr_proc.model, 'decode_options'):
+                                            self.online_asr_proc.model.decode_options = self.online_asr_proc.model.decode_options._replace(language=None)
+                                        # Reset detected_language to allow re-detection on next segment
+                                        self.online_asr_proc.model.detected_language = None
+                                        self.online_asr_proc.model.create_tokenizer(None)
+                                        # Reinitialize tokens for auto-detect mode
+                                        self.online_asr_proc.model.init_tokens()
+                                        logger.info(f"[Whisper] Set to auto-detect language mode (cfg.language={self.online_asr_proc.model.cfg.language})")
                         elif msg_type == 'finish':
                             logger.info("Received finish command - flushing buffer")
                             # Flush remaining audio buffer
