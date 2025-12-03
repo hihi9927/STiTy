@@ -19,7 +19,7 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 def librispeech_streaming_args(parser):
     group = parser.add_argument_group('Whisper arguments (Streaming mode)')
     group.add_argument('--model_path', type=str,
-                       default='large-v2',  # Will download large-v2 model if not present
+                       default=os.path.join(parent_dir, 'SimulStreaming', 'large-v2.pt'),
                        help='The file path to the SimulStreaming .pt model or model name (e.g., "large-v2").')
     group.add_argument("--beams","-b", type=int, default=1, help="Number of beams for beam search decoding. If 1, GreedyDecoder is used.")
     group.add_argument("--decoder",type=str, default=None, help="Override automatic selection of beam or greedy decoder. "
@@ -51,6 +51,14 @@ def librispeech_streaming_args(parser):
     group.add_argument("--static_init_prompt",type=str, default=None, help="Do not scroll over this text. It can contain terminology that should be relevant over all document.")
     group.add_argument("--max_context_tokens",type=int, default=None, help="Max context tokens for the model. Default is 0.")
 
+    group = parser.add_argument_group("Speculative decoding")
+    group.add_argument("--use_speculative_decoding", action="store_true", default=False,
+                       help="Enable speculative decoding with distil-whisper for faster inference (only works with greedy decoder)")
+    group.add_argument("--assistant_model_path", type=str, default=None,
+                       help="Path to assistant model (e.g., distil-large-v3.pt) for speculative decoding")
+    group.add_argument("--num_assistant_tokens", type=int, default=5,
+                       help="Number of tokens to predict ahead with assistant model (default: 5)")
+
 
 def librispeech_streaming_factory(args):
     logger.setLevel(args.log_level)
@@ -68,8 +76,16 @@ def librispeech_streaming_factory(args):
         elif decoder not in ("beam","greedy"):
             raise ValueError("Invalid decoder type. Use 'beam' or 'greedy'.")
 
+    # Validate speculative decoding settings
+    if args.use_speculative_decoding:
+        if decoder != "greedy":
+            raise ValueError("Speculative decoding only works with greedy decoder (beams=1)")
+        if not args.assistant_model_path:
+            raise ValueError("--assistant_model_path is required when using speculative decoding")
+
     a = { v:getattr(args, v) for v in ["model_path", "cif_ckpt_path", "frame_threshold", "audio_min_len", "audio_max_len", "beams", "task",
-                                       "never_fire", 'init_prompt', 'static_init_prompt', 'max_context_tokens', "logdir"
+                                       "never_fire", 'init_prompt', 'static_init_prompt', 'max_context_tokens', "logdir",
+                                       "use_speculative_decoding", "assistant_model_path", "num_assistant_tokens"
                                        ]}
     a["language"] = args.lan
     a["segment_length"] = args.min_chunk_size
@@ -81,6 +97,8 @@ def librispeech_streaming_factory(args):
         raise ValueError("audio_min_len must be smaller than audio_max_len")
 
     logger.info(f"[STREAMING MODE] Using model: {a['model_path']}")
+    if a["use_speculative_decoding"]:
+        logger.info(f"[STREAMING MODE] Speculative decoding enabled with assistant model: {a['assistant_model_path']}")
     logger.info(f"Arguments: {a}")
 
     # Import the base ASR classes from librispeech_whisper
