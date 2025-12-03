@@ -838,6 +838,19 @@ class WebSocketHandler:
 
                 logger.info(f"[send_result] Buffer now has {len(self.translation_buffer)} segments")
 
+                # Check for hallucination in the ENTIRE buffer (cumulative text)
+                # This prevents partial results from being sent during hallucination
+                cumulative_text = ' '.join(seg['text'] for seg in self.translation_buffer)
+                is_cumulative_halluc, cumulative_halluc_reason = self.is_hallucination(cumulative_text)
+
+                if is_cumulative_halluc:
+                    logger.warning(f"[Hallucination] Detected in cumulative buffer: '{cumulative_text}' - reason: {cumulative_halluc_reason}")
+                    logger.info(f"[Hallucination] Clearing buffer ({len(self.translation_buffer)} segments) and resetting ASR")
+                    self.translation_buffer = []
+                    self.recent_tokens = []
+                    self.online_asr_proc.init()
+                    return  # Don't send any partial or final message
+
                 # Check if this segment ends with sentence-ending punctuation
                 sentence_complete = any(text.endswith(p) for p in ['.', '!', '?', '。', '!', '?'])
 
@@ -868,7 +881,6 @@ class WebSocketHandler:
                         # Sentence not complete yet - send cumulative partial result with translation
                         if self.display_mode != 'translateOnly':
                             # Send cumulative text (all buffered segments combined)
-                            cumulative_text = ' '.join(seg['text'] for seg in self.translation_buffer)
                             first_start = self.translation_buffer[0]['start']
 
                             logger.info(f"[send_result] Partial cumulative ({len(self.translation_buffer)} segments): {cumulative_text}")
