@@ -18,7 +18,7 @@ const DOM = {
   closeAppBtn: document.getElementById('closeAppBtn')
 };
 
-// 메인 창으로부터 상태 업데이트 수신
+// Receive status updates from main window
 ipcRenderer.on('update-server-status', (event, connected) => {
   DOM.serverIndicatorMini.classList.toggle('connected', connected);
 });
@@ -33,7 +33,7 @@ ipcRenderer.on('update-translation-log', (event, history) => {
 
 function updateLogDisplay(history) {
   if (history.length === 0) {
-    DOM.translationLog.innerHTML = '<div class="log-empty">아직 번역 기록이 없습니다</div>';
+    DOM.translationLog.innerHTML = '<div class="log-empty">No translation history yet</div>';
     return;
   }
 
@@ -81,23 +81,23 @@ function loadSettings() {
 }
 
 function setupEventListeners() {
-  // Space 키 이벤트 - 설정 창에서도 녹음 토글 가능
+  // Space key event - toggle recording even in settings window
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Space' && !e.target.matches('input, select, textarea')) {
       e.preventDefault();
-      if (e.repeat) return; // 연속 입력 방지
+      if (e.repeat) return; // Prevent continuous input
 
-      // 메인 창으로 녹음 토글 요청 전달
+      // Send recording toggle request to main window
       ipcRenderer.send('toggle-recording');
     }
   });
 
-  // 설정 창 닫기
+  // Close settings
   DOM.closeSettings.addEventListener('click', () => {
     ipcRenderer.send('close-settings-window');
   });
 
-  // 투명도 변경
+  // Change opacity
   DOM.opacitySlider.addEventListener('input', (e) => {
     const value = e.target.value;
     DOM.opacityValue.textContent = value + '%';
@@ -105,7 +105,7 @@ function setupEventListeners() {
     ipcRenderer.send('opacity-changed', value);
   });
 
-  // 텍스트 크기 변경
+  // Change text size
   DOM.textSizeSlider.addEventListener('input', (e) => {
     const value = e.target.value;
     DOM.textSizeValue.textContent = value + '%';
@@ -113,14 +113,14 @@ function setupEventListeners() {
     ipcRenderer.send('text-size-changed', value);
   });
 
-  // 서버 URL 변경
+  // Change server URL
   DOM.serverUrlInput.addEventListener('change', (e) => {
     const value = e.target.value.trim();
     localStorage.setItem('serverUrl', value);
     ipcRenderer.send('server-url-changed', value);
   });
 
-  // 텍스트 색깔 변경
+  // Change text color
   const textColorHandler = (e) => {
     const color = e.target.value;
     localStorage.setItem('textColor', color);
@@ -130,7 +130,7 @@ function setupEventListeners() {
   DOM.textColorWhite.addEventListener('change', textColorHandler);
   DOM.textColorBlack.addEventListener('change', textColorHandler);
 
-  // 표시 모드 변경
+  // Change display mode
   const displayModeHandler = (e) => {
     const mode = e.target.value;
     localStorage.setItem('displayMode', mode);
@@ -141,7 +141,7 @@ function setupEventListeners() {
   DOM.modeTranscriptOnly.addEventListener('change', displayModeHandler);
   DOM.modeBoth.addEventListener('change', displayModeHandler);
 
-  // 앱 종료
+  // Close app
   DOM.closeAppBtn.addEventListener('click', () => {
     ipcRenderer.send('close-app');
   });
@@ -151,7 +151,7 @@ function init() {
   loadSettings();
   setupEventListeners();
 
-  // 메인 창에 초기 상태 요청
+  // Request initial state from main window
   ipcRenderer.send('request-initial-state');
 }
 

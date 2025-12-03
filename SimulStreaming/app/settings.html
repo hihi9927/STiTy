@@ -1,26 +1,26 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>설정</title>
+<title>Settings</title>
 <link rel="stylesheet" href="settings-styles.css">
 </head>
 <body>
   <div class="settings-panel">
     <div class="settings-header">
-      <h2>설정</h2>
+      <h2>Settings</h2>
       <div class="header-controls">
         <div class="status-indicators">
-          <div class="indicator-dot server-indicator-mini" id="serverIndicatorMini" data-tooltip="서버 연결 상태"></div>
-          <div class="indicator-dot recording-indicator-mini" id="recordingIndicatorMini" data-tooltip="녹음 상태"></div>
+          <div class="indicator-dot server-indicator-mini" id="serverIndicatorMini" data-tooltip="Server Connection Status"></div>
+          <div class="indicator-dot recording-indicator-mini" id="recordingIndicatorMini" data-tooltip="Recording Status"></div>
         </div>
-        <button class="close-settings" id="closeSettings" aria-label="설정 닫기">✕</button>
+        <button class="close-settings" id="closeSettings" aria-label="Close Settings">✕</button>
       </div>
     </div>
 
     <div class="settings-section">
-      <label class="settings-label" for="serverUrlInput">서버 URL</label>
+      <label class="settings-label" for="serverUrlInput">Server URL</label>
       <div class="server-url-row">
         <input type="text" class="server-url-input" id="serverUrlInput"
                value="wss://edra-raspiest-eagerly.ngrok-free.dev/ws"
@@ -29,25 +29,25 @@
     </div>
 
     <div class="settings-section">
-      <label class="settings-label">표시 모드</label>
+      <label class="settings-label">Display Mode</label>
       <div class="settings-row" style="gap: 20px;">
         <div class="radio-option">
           <input type="radio" id="modeTranslateOnly" name="displayMode" value="translateOnly">
-          <label for="modeTranslateOnly" class="settings-label" style="margin:0">번역만</label>
+          <label for="modeTranslateOnly" class="settings-label" style="margin:0">Translation Only</label>
         </div>
         <div class="radio-option">
           <input type="radio" id="modeTranscriptOnly" name="displayMode" value="transcriptOnly">
-          <label for="modeTranscriptOnly" class="settings-label" style="margin:0">전사만</label>
+          <label for="modeTranscriptOnly" class="settings-label" style="margin:0">Transcript Only</label>
         </div>
         <div class="radio-option">
           <input type="radio" id="modeBoth" name="displayMode" value="both" checked>
-          <label for="modeBoth" class="settings-label" style="margin:0">번역+전사</label>
+          <label for="modeBoth" class="settings-label" style="margin:0">Both</label>
         </div>
       </div>
     </div>
 
     <div class="settings-section">
-      <label class="settings-label" for="opacitySlider">배경 투명도</label>
+      <label class="settings-label" for="opacitySlider">Background Opacity</label>
       <div class="opacity-row">
         <input type="range" id="opacitySlider" min="0" max="100" value="100">
         <span class="opacity-value" id="opacityValue">100%</span>
@@ -55,7 +55,7 @@
     </div>
 
     <div class="settings-section">
-      <label class="settings-label" for="textSizeSlider">텍스트 크기</label>
+      <label class="settings-label" for="textSizeSlider">Text Size</label>
       <div class="opacity-row">
         <input type="range" id="textSizeSlider" min="50" max="400" value="100">
         <span class="opacity-value" id="textSizeValue">100%</span>
@@ -63,28 +63,28 @@
     </div>
 
     <div class="settings-section">
-      <label class="settings-label">텍스트 색깔</label>
+      <label class="settings-label">Text Color</label>
       <div class="settings-row" style="gap: 20px;">
         <div class="radio-option">
           <input type="radio" id="textColorWhite" name="textColor" value="white" checked>
-          <label for="textColorWhite" class="settings-label" style="margin:0">흰색</label>
+          <label for="textColorWhite" class="settings-label" style="margin:0">White</label>
         </div>
         <div class="radio-option">
           <input type="radio" id="textColorBlack" name="textColor" value="black">
-          <label for="textColorBlack" class="settings-label" style="margin:0">검정색</label>
+          <label for="textColorBlack" class="settings-label" style="margin:0">Black</label>
         </div>
       </div>
     </div>
 
     <div class="settings-section">
-      <label class="settings-label">번역 로그</label>
+      <label class="settings-label">Translation Log</label>
       <div class="translation-log" id="translationLog">
-        <div class="log-empty">아직 번역 기록이 없습니다</div>
+        <div class="log-empty">No translation history yet</div>
       </div>
     </div>
 
     <div class="settings-section">
-      <button class="close-app-btn" id="closeAppBtn">앱 종료</button>
+      <button class="close-app-btn" id="closeAppBtn">Close App</button>
     </div>
   </div>
 
