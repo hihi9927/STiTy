@@ -8,7 +8,11 @@
       "Bash(git checkout:*)",
       "Bash(tree:*)",
       "Bash(dir:*)",
-      "Bash(git init:*)"
+      "Bash(git init:*)",
+      "Bash(git remote add:*)",
+      "Bash(git push:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm install:*)"
     ],
     "deny": [],
     "ask": []
