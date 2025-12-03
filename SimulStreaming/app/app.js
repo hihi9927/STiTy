@@ -310,9 +310,12 @@ async function connectWebSocket() {
         polish = true;
       }
 
+      // Get language hint from settings
+      const languageHint = localStorage.getItem('languageHint') || 'auto';
+
       const startMsg = {
         type: 'start',
-        lang: 'auto',
+        lang: languageHint,
         polish: polish,
         translate: translate
       };
@@ -921,6 +924,19 @@ function setupElectronIntegration() {
       // 현재 표시된 텍스트를 새로운 모드로 다시 표시
       if (state.currentOriginal || state.currentTranslated) {
         showResult(state.currentOriginal, state.currentTranslated);
+      }
+    });
+
+    ipcRenderer.on('language-hint-changed', async (_event, value) => {
+      console.log('🌐 언어 힌트 변경됨:', value);
+      localStorage.setItem('languageHint', value);
+
+      // 서버 재연결 (새로운 언어 힌트 적용)
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        console.log('🔄 언어 힌트 변경으로 인한 서버 재연결...');
+        state.ws.close();
+        await new Promise(resolve => setTimeout(resolve, 500));
+        await connectWebSocket();
       }
     });
 

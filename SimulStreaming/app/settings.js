@@ -14,6 +14,9 @@ const DOM = {
   textSizeValue: document.getElementById('textSizeValue'),
   textColorWhite: document.getElementById('textColorWhite'),
   textColorBlack: document.getElementById('textColorBlack'),
+  languageAuto: document.getElementById('languageAuto'),
+  languageEnglish: document.getElementById('languageEnglish'),
+  languageKorean: document.getElementById('languageKorean'),
   translationLog: document.getElementById('translationLog'),
   closeAppBtn: document.getElementById('closeAppBtn')
 };
@@ -78,6 +81,15 @@ function loadSettings() {
   } else {
     DOM.textColorBlack.checked = true;
   }
+
+  const savedLanguageHint = localStorage.getItem('languageHint') || 'auto';
+  if (savedLanguageHint === 'auto') {
+    DOM.languageAuto.checked = true;
+  } else if (savedLanguageHint === 'en') {
+    DOM.languageEnglish.checked = true;
+  } else {
+    DOM.languageKorean.checked = true;
+  }
 }
 
 function setupEventListeners() {
@@ -140,6 +152,17 @@ function setupEventListeners() {
   DOM.modeTranslateOnly.addEventListener('change', displayModeHandler);
   DOM.modeTranscriptOnly.addEventListener('change', displayModeHandler);
   DOM.modeBoth.addEventListener('change', displayModeHandler);
+
+  // Change language hint
+  const languageHintHandler = (e) => {
+    const language = e.target.value;
+    localStorage.setItem('languageHint', language);
+    ipcRenderer.send('language-hint-changed', language);
+  };
+
+  DOM.languageAuto.addEventListener('change', languageHintHandler);
+  DOM.languageEnglish.addEventListener('change', languageHintHandler);
+  DOM.languageKorean.addEventListener('change', languageHintHandler);
 
   // Close app
   DOM.closeAppBtn.addEventListener('click', () => {

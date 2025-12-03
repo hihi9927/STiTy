@@ -77,6 +77,24 @@
     </div>
 
     <div class="settings-section">
+      <label class="settings-label">Language Hint</label>
+      <div class="settings-row" style="gap: 20px;">
+        <div class="radio-option">
+          <input type="radio" id="languageAuto" name="languageHint" value="auto" checked>
+          <label for="languageAuto" class="settings-label" style="margin:0">Auto Detect</label>
+        </div>
+        <div class="radio-option">
+          <input type="radio" id="languageEnglish" name="languageHint" value="en">
+          <label for="languageEnglish" class="settings-label" style="margin:0">English</label>
+        </div>
+        <div class="radio-option">
+          <input type="radio" id="languageKorean" name="languageHint" value="ko">
+          <label for="languageKorean" class="settings-label" style="margin:0">Korean</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
       <label class="settings-label">Translation Log</label>
       <div class="translation-log" id="translationLog">
         <div class="log-empty">No translation history yet</div>
